@@ -40,7 +40,10 @@ passphrase dialog — is the real theme.</sub>
   sizes (256–1024, glow radius scaled to match) and the theme picks the
   nearest one above the target, keeping the runtime downscale under
   ~1.4x on everything from 768p to 5K.
-- **Esc** still toggles plymouth's full details view at any time.
+- **Esc** still toggles plymouth's full details view at any time, and
+  `plymouth.enable=0` appended to the kernel command line (hold `Space`
+  at startup, press `e` on the boot entry) disables the splash for that
+  one boot — the escape hatch if a splash change ever misbehaves.
 - Clean handoff: quits with `--retain-splash` so there's no text-VT
   flash while your display manager starts.
 
@@ -53,6 +56,28 @@ viewer — script themes never see it. `patches/plymouth-script-boot-output.patc
 each tagged with the line's dominant SGR foreground color so themes can
 style by severity. The module builds plymouth with this patch via
 `boot.plymouth.package`; expect at most trivial fuzz on version bumps.
+
+## The passphrase prompt
+
+Plymouth ships `systemd-ask-password-plymouth.{path,service}` itself and
+hardcodes the service's `ExecStart` to the systemd *plymouth* was built
+against — a different store path from the systemd in your initrd, and
+one the initrd has no reason to contain. So the only process that can
+carry a passphrase request to the splash dies with `203/EXEC`, the path
+unit retriggers until it hits systemd's trigger limit, and the boot sits
+at `Starting Cryptography Setup for ...` with no prompt. Plymouth still
+owns the keyboard, so typing blind doesn't help either.
+
+It normally stays invisible: both units are gated on
+`ConditionPathExists=/run/plymouth/pid` and get skipped before they can
+fail, so whether you ever get a prompt comes down to whether plymouthd
+wrote that file before the units were evaluated — i.e. how quickly your
+GPU hands over a DRM device.
+
+This module ships the agent from the initrd's own systemd, repoints the
+unit at it, and clears the conditions and the trigger limit, so LUKS
+prompting works regardless of that race. If nixpkgs fixes it upstream,
+the override becomes a harmless no-op.
 
 ## Usage
 
@@ -129,40 +154,10 @@ acidBoot = {
   your first rebuild, not after.
 - **Rotated monitors**: `video=<connector>:panel_orientation=…` on the
   kernel command line rotates the splash per output.
-- **Early KMS can hang the boot before the passphrase prompt.** Adding a
-  GPU driver to the initrd pulls firmware handshakes into stage 1 that
-  normally happen much later. We hit `GSC proxy component not bound`
-  with `xe` on Intel Lunar Lake; adding `mei mei_me mei_gsc_proxy`
-  alongside it is the usual remedy for that one. Whatever your GPU:
-  **use `nixos-rebuild boot`, not `switch`, for the first rebuild**, and
-  know how to reach your boot menu (hold Space with systemd-boot) so the
-  previous generation is one keypress away.
-
-> [!WARNING]
-> **Pre-flight your ESP before the first rebuild with this module.**
-> These initrds are likely the biggest thing your ESP has ever had to
-> swallow, and they will find latent problems that small initrds never
-> touched. In particular, check that your FAT filesystem is not larger
-> than its partition (it happens — hand-formatted or image-restored
-> ESPs):
->
-> ```
-> df -B1 --output=size /boot | tail -1
-> lsblk -bno SIZE "$(findmnt -no SOURCE /boot)"
-> ```
->
-> If `df` reports **more** than `lsblk`, every write past the partition
-> edge will fail with `Input/output error` — and a reflexive
-> `fsck.vfat -a` at that point will "repair" the geometry by truncating
-> files, which can destroy **every existing boot entry** and leave the
-> machine unbootable. (`fsck.vfat -n` names the problem outright:
-> `Seek to <byte offset beyond the partition>: Invalid argument`.)
->
-> This is not hypothetical — it cost us a laptop's entire boot
-> partition, recovered only via an installer USB. If the sizes
-> disagree: back up the ESP contents, recreate the filesystem
-> (`mkfs.vfat` sizes it correctly), and reinstall the bootloader —
-> *before* enabling this module.
+- **Use `nixos-rebuild boot`, not `switch`, for the first rebuild**, so
+  the previous generation stays the default and is one keypress away
+  (hold `Space` with systemd-boot). Anything that changes what happens
+  in stage 1 deserves that safety net.
 
 ## Troubleshooting: boot hangs before the passphrase prompt
 
@@ -179,64 +174,33 @@ plain text prompt. It both rescues the machine and tells you the fault
 is in plymouth rather than in your disk, kernel or initrd — worth
 keeping in your head as the standard first move.
 
-The usual cause is that plymouth never got a graphical device. It waits
-`DeviceTimeout` seconds (8 by default) for one, and if none appears it
-falls back to its **text renderer** — in which a `script` theme like
-this one can draw *nothing at all*, including the passphrase dialog. The
-prompt is genuinely there and typing your passphrase blind still works;
-it's simply invisible.
+The module already fixes the most likely cause — see "the passphrase
+prompt" above — but if you hit it anyway, the usual remaining suspects
+are:
 
-That happens when the GPU driver is slow to bring up KMS in stage 1, so:
+- **Plymouth never got a graphical device.** It waits `DeviceTimeout`
+  seconds (8 by default) for one, and if none appears it falls back to
+  its *text renderer*, in which a `script` theme like this one can draw
+  nothing at all — including the dialog. Give it longer with
+  `boot.plymouth.extraConfig = "DeviceTimeout=20";`, or drop the GPU
+  module from `boot.initrd.kernelModules` and accept a text prompt at
+  LUKS with the splash starting in stage 2.
+- **A slow GPU handshake in stage 1.** Adding a driver to the initrd
+  pulls firmware negotiation earlier than it normally happens; be
+  sparing with extra modules and check whether the driver alone works
+  before adding companions.
 
-- Give it longer: `boot.plymouth.extraConfig = "DeviceTimeout=20";`
-- Be sparing with extra initrd modules. On one Lunar Lake laptop, adding
-  `mei mei_me mei_gsc_proxy` alongside `xe` delayed DRM past the timeout
-  and produced exactly this hang; `xe` on its own was fine.
-- Or accept a text prompt at LUKS: drop the GPU module from
-  `boot.initrd.kernelModules` and let the splash start in stage 2.
+Whatever the cause: **use `nixos-rebuild boot`, not `switch`, for the
+first rebuild**, so the previous generation stays the default and is one
+keypress away.
 
 ## Troubleshooting: `Failed to install bootloader`
 
-Two distinct failures look similar when the fat initrds meet a small
-ESP:
-
-- **`OSError: [Errno 28] No space left on device`** — the ESP is full
-  of old kernel+initrd pairs. Fix: `sudo nix-collect-garbage -d`, set
-  `configurationLimit`, and re-run `nixos-rebuild boot`.
-- **`could not sync /boot` + `OSError: [Errno 5] Input/output error`
-  with free space left** — STOP. Do not reboot, and do **not** reach
-  for `fsck.vfat -a` yet. First, image the ESP so every next step is
-  reversible, then check whether the FAT is bigger than its partition
-  (the pre-flight check above):
-
-  ```
-  sudo dd if=/dev/nvme0n1p1 of=/root/esp-backup.img bs=4M   # your ESP device
-  df -B1 --output=size /boot | tail -1
-  lsblk -bno SIZE "$(findmnt -no SOURCE /boot)"
-  ```
-
-  - **Sizes disagree (df > lsblk)**: the filesystem overhangs the
-    partition. `fsck -a` here truncates files and can wipe every boot
-    entry — this is the bricking path. Instead, recreate the ESP; all
-    of its contents are regenerable from the Nix store:
-
-    ```
-    sudo umount /boot
-    sudo mkfs.vfat -F32 /dev/nvme0n1p1
-    sudo mount /boot
-    sudo NIXOS_INSTALL_BOOTLOADER=1 nixos-rebuild boot --flake .#<host>
-    ```
-
-  - **Sizes agree**: plain dirty FAT; `fsck.vfat -a` then
-    `nixos-rebuild boot` is fine (you have the image if it isn't).
-  - `dmesg` showing NVMe/controller errors rather than `FAT-fs` errors
-    is failing hardware — back up your data before anything else.
-
-  If it's already too late and no generation boots: boot any NixOS
-  installer USB, unlock your root, mount it at `/mnt` plus the
-  (freshly `mkfs.vfat`-ed) ESP at `/mnt/boot`, and run
-  `nixos-enter --root /mnt -c 'NIXOS_INSTALL_BOOTLOADER=1 /nix/var/nix/profiles/system/bin/switch-to-configuration boot'`.
-  Ten minutes, no data loss.
+`OSError: [Errno 28] No space left on device` means the ESP is full of
+old kernel+initrd pairs — these are big (see the ESP note above). Fix
+with `sudo nix-collect-garbage -d`, set
+`boot.loader.systemd-boot.configurationLimit`, and re-run
+`nixos-rebuild boot`.
 
 ## License
 
