@@ -1,11 +1,12 @@
 diff -ruN a/src/plugins/splash/script/plugin.c b/src/plugins/splash/script/plugin.c
 --- a/src/plugins/splash/script/plugin.c	2026-08-08 08:52:13.971977537 +0900
-+++ b/src/plugins/splash/script/plugin.c	2026-08-08 13:27:25.022940018 +0900
-@@ -101,7 +101,11 @@
++++ b/src/plugins/splash/script/plugin.c	2026-08-08 13:51:58.964411295 +0900
+@@ -101,7 +101,12 @@
  
          char                          *monospace_font;
          uint32_t                       should_show_console_messages : 1;
 +        uint32_t                       script_ansi_skip : 1;
++        uint32_t                       script_pending_cr : 1;
 +        int                            script_ansi_code;
 +        int                            script_line_color;
          ply_buffer_t                  *boot_buffer;
@@ -13,7 +14,7 @@ diff -ruN a/src/plugins/splash/script/plugin.c b/src/plugins/splash/script/plugi
          uint32_t                       console_text_color;
          uint32_t                       console_background_color;
  };
-@@ -226,6 +230,8 @@
+@@ -226,6 +231,8 @@
          plugin->script_env_vars = ply_list_new ();
          ply_key_file_foreach_entry (key_file, add_script_env_var, plugin->script_env_vars);
  
@@ -22,7 +23,7 @@ diff -ruN a/src/plugins/splash/script/plugin.c b/src/plugins/splash/script/plugi
          /* Likely only able to set the font if the font is in the initrd */
          plugin->monospace_font = ply_key_file_get_value (key_file, "script", "MonospaceFont");
  
-@@ -275,6 +281,7 @@
+@@ -275,6 +282,7 @@
                  free (env_var);
          }
          ply_list_free (plugin->script_env_vars);
@@ -30,7 +31,7 @@ diff -ruN a/src/plugins/splash/script/plugin.c b/src/plugins/splash/script/plugi
          free (plugin->script_filename);
          free (plugin->image_dir);
          free (plugin->monospace_font);
-@@ -715,6 +722,104 @@
+@@ -715,6 +723,125 @@
  }
  
  static void
@@ -86,25 +87,46 @@ diff -ruN a/src/plugins/splash/script/plugin.c b/src/plugins/splash/script/plugi
 +                        plugin->script_ansi_code = 0;
 +                        continue;
 +                }
-+                /* '\n' ends a line; '\r' means the writer is about to
-+                 * redraw the same line in place (systemd's "A stop job is
-+                 * running for ... (5s / 1min 30s)" spinner does this once
-+                 * a second). Both complete a line, but a '\r' one is
-+                 * flagged so the theme can overwrite its predecessor
-+                 * instead of scrolling. Without this the spinner never
-+                 * terminates a line at all and every update accretes into
-+                 * one long garbage string. */
-+                if (c == '\n' || c == '\r') {
++                /* Ordinary console lines arrive CRLF-terminated, so a '\r'
++                 * on its own means nothing until we have seen what
++                 * follows it: '\n' makes it a normal line ending, while
++                 * anything else means the writer is redrawing the same
++                 * line in place (systemd's "A stop job is running for ...
++                 * (5s / 1min 30s)" ticks once a second that way). Only the
++                 * latter is flagged as a replacement, so in-place redraws
++                 * update one line while normal output still scrolls. */
++                if (c == '\r') {
++                        plugin->script_pending_cr = 1;
++                        continue;
++                }
++
++                if (plugin->script_pending_cr) {
++                        plugin->script_pending_cr = 0;
 +                        if (ply_buffer_get_size (plugin->script_line_buffer) > 0) {
 +                                script_lib_plymouth_on_boot_output (plugin->script_state,
 +                                                                    plugin->script_plymouth_lib,
 +                                                                    ply_buffer_get_bytes (plugin->script_line_buffer),
 +                                                                    plugin->script_line_color,
-+                                                                    c == '\r' ? 1 : 0);
++                                                                    c == '\n' ? 0 : 1);
 +                                ply_buffer_clear (plugin->script_line_buffer);
 +                        }
-+                        if (c == '\n')
++                        if (c == '\n') {
 +                                plugin->script_line_color = 0;
++                                continue;
++                        }
++                        /* fall through: c belongs to the redrawn line */
++                }
++
++                if (c == '\n') {
++                        if (ply_buffer_get_size (plugin->script_line_buffer) > 0) {
++                                script_lib_plymouth_on_boot_output (plugin->script_state,
++                                                                    plugin->script_plymouth_lib,
++                                                                    ply_buffer_get_bytes (plugin->script_line_buffer),
++                                                                    plugin->script_line_color,
++                                                                    0);
++                                ply_buffer_clear (plugin->script_line_buffer);
++                        }
++                        plugin->script_line_color = 0;
 +                        continue;
 +                }
 +                if (c > '\0' && c < ' ')
@@ -135,7 +157,7 @@ diff -ruN a/src/plugins/splash/script/plugin.c b/src/plugins/splash/script/plugi
  on_boot_output (ply_boot_splash_plugin_t *plugin,
                  const char               *output,
                  size_t                    size)
-@@ -722,6 +827,8 @@
+@@ -722,6 +849,8 @@
          ply_list_t *displays;
          ply_list_node_t *node;
  
