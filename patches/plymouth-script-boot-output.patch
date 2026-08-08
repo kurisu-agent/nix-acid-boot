@@ -1,0 +1,199 @@
+diff -ruN a/src/plugins/splash/script/plugin.c b/src/plugins/splash/script/plugin.c
+--- a/src/plugins/splash/script/plugin.c	2026-08-08 08:52:13.971977537 +0900
++++ b/src/plugins/splash/script/plugin.c	2026-08-08 11:30:01.813861947 +0900
+@@ -101,7 +101,11 @@
+ 
+         char                          *monospace_font;
+         uint32_t                       should_show_console_messages : 1;
++        uint32_t                       script_ansi_skip : 1;
++        int                            script_ansi_code;
++        int                            script_line_color;
+         ply_buffer_t                  *boot_buffer;
++        ply_buffer_t                  *script_line_buffer;
+         uint32_t                       console_text_color;
+         uint32_t                       console_background_color;
+ };
+@@ -226,6 +230,8 @@
+         plugin->script_env_vars = ply_list_new ();
+         ply_key_file_foreach_entry (key_file, add_script_env_var, plugin->script_env_vars);
+ 
++        plugin->script_line_buffer = ply_buffer_new ();
++
+         /* Likely only able to set the font if the font is in the initrd */
+         plugin->monospace_font = ply_key_file_get_value (key_file, "script", "MonospaceFont");
+ 
+@@ -275,6 +281,7 @@
+                 free (env_var);
+         }
+         ply_list_free (plugin->script_env_vars);
++        ply_buffer_free (plugin->script_line_buffer);
+         free (plugin->script_filename);
+         free (plugin->image_dir);
+         free (plugin->monospace_font);
+@@ -715,6 +722,77 @@
+ }
+ 
+ static void
++forward_boot_output_lines (ply_boot_splash_plugin_t *plugin,
++                           const char               *output,
++                           size_t                    size)
++{
++        size_t i;
++
++        /* Only touch script state while the script is genuinely live.
++         * start_animation() sets is_animating *after* start_script_animation()
++         * has filled these pointers in (script_state is assigned before
++         * script_plymouth_lib, so there is a window where the first is
++         * set and the second is still NULL), and stop_animation() clears
++         * is_animating *before* destroying them — and does not NULL them
++         * afterwards. Guarding on is_animating therefore closes both a
++         * NULL dereference on the way up and a use-after-free on the way
++         * down; the explicit NULL checks are belt and braces. Getting
++         * this wrong crashes plymouthd, which silently takes the
++         * passphrase prompt with it and looks exactly like a boot hang. */
++        if (!plugin->is_animating)
++                return;
++
++        if (plugin->script_state == NULL || plugin->script_plymouth_lib == NULL)
++                return;
++
++        if (script_obj_is_null (plugin->script_plymouth_lib->script_boot_output_func))
++                return;
++
++        for (i = 0; i < size; i++) {
++                char c = output[i];
++
++                /* strip ANSI/VT escape sequences (ESC to the terminating
++                 * letter), remembering the last SGR foreground color seen
++                 * on this line so the theme can style by severity */
++                if (plugin->script_ansi_skip) {
++                        if (c >= '0' && c <= '9') {
++                                plugin->script_ansi_code =
++                                        plugin->script_ansi_code * 10 + (c - '0');
++                        } else {
++                                if ((plugin->script_ansi_code >= 30 && plugin->script_ansi_code <= 37) ||
++                                    (plugin->script_ansi_code >= 90 && plugin->script_ansi_code <= 97))
++                                        plugin->script_line_color =
++                                                plugin->script_ansi_code % 60;
++                                plugin->script_ansi_code = 0;
++                                if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'))
++                                        plugin->script_ansi_skip = 0;
++                        }
++                        continue;
++                }
++                if (c == '\033') {
++                        plugin->script_ansi_skip = 1;
++                        plugin->script_ansi_code = 0;
++                        continue;
++                }
++                if (c == '\n') {
++                        if (ply_buffer_get_size (plugin->script_line_buffer) > 0) {
++                                script_lib_plymouth_on_boot_output (plugin->script_state,
++                                                                    plugin->script_plymouth_lib,
++                                                                    ply_buffer_get_bytes (plugin->script_line_buffer),
++                                                                    plugin->script_line_color);
++                                ply_buffer_clear (plugin->script_line_buffer);
++                        }
++                        plugin->script_line_color = 0;
++                        continue;
++                }
++                if (c == '\r' || (c > '\0' && c < ' '))
++                        continue;
++                if (ply_buffer_get_size (plugin->script_line_buffer) < 512)
++                        ply_buffer_append_bytes (plugin->script_line_buffer, &c, 1);
++        }
++}
++
++static void
+ on_boot_output (ply_boot_splash_plugin_t *plugin,
+                 const char               *output,
+                 size_t                    size)
+@@ -722,6 +800,8 @@
+         ply_list_t *displays;
+         ply_list_node_t *node;
+ 
++        forward_boot_output_lines (plugin, output, size);
++
+         if (!ply_console_viewer_preferred ())
+                 return;
+ 
+diff -ruN a/src/plugins/splash/script/script-lib-plymouth.c b/src/plugins/splash/script/script-lib-plymouth.c
+--- a/src/plugins/splash/script/script-lib-plymouth.c	2026-08-08 08:52:13.972193540 +0900
++++ b/src/plugins/splash/script/script-lib-plymouth.c	2026-08-08 09:06:29.926087126 +0900
+@@ -134,6 +134,7 @@
+         data->script_hide_message_func = script_obj_new_null ();
+         data->script_quit_func = script_obj_new_null ();
+         data->script_system_update_func = script_obj_new_null ();
++        data->script_boot_output_func = script_obj_new_null ();
+         data->mode = mode;
+         data->refresh_rate = refresh_rate;
+         data->keyboard = keyboard;
+@@ -231,6 +232,12 @@
+                                     "function",
+                                     NULL);
+         script_add_native_function (plymouth_hash,
++                                    "SetBootOutputFunction",
++                                    plymouth_set_function,
++                                    &data->script_boot_output_func,
++                                    "function",
++                                    NULL);
++        script_add_native_function (plymouth_hash,
+                                     "GetCapslockState",
+                                     plymouth_get_capslock_state,
+                                     data,
+@@ -274,6 +281,7 @@
+         script_obj_unref (data->script_hide_message_func);
+         script_obj_unref (data->script_quit_func);
+         script_obj_unref (data->script_system_update_func);
++        script_obj_unref (data->script_boot_output_func);
+         free (data);
+ }
+ 
+@@ -348,6 +356,25 @@
+         script_obj_unref (ret.object);
+ }
+ 
++void script_lib_plymouth_on_boot_output (script_state_t             *state,
++                                         script_lib_plymouth_data_t *data,
++                                         const char                 *line,
++                                         int                         color)
++{
++        script_obj_t *line_obj = script_obj_new_string (line);
++        script_obj_t *color_obj = script_obj_new_number (color);
++        script_return_t ret = script_execute_object (state,
++                                                     data->script_boot_output_func,
++                                                     NULL,
++                                                     line_obj,
++                                                     color_obj,
++                                                     NULL);
++
++        script_obj_unref (line_obj);
++        script_obj_unref (color_obj);
++        script_obj_unref (ret.object);
++}
++
+ void script_lib_plymouth_on_display_normal (script_state_t             *state,
+                                             script_lib_plymouth_data_t *data)
+ {
+diff -ruN a/src/plugins/splash/script/script-lib-plymouth.h b/src/plugins/splash/script/script-lib-plymouth.h
+--- a/src/plugins/splash/script/script-lib-plymouth.h	2026-08-08 08:52:13.972218317 +0900
++++ b/src/plugins/splash/script/script-lib-plymouth.h	2026-08-08 09:06:35.687077625 +0900
+@@ -43,6 +43,7 @@
+         script_obj_t          *script_hide_message_func;
+         script_obj_t          *script_quit_func;
+         script_obj_t          *script_system_update_func;
++        script_obj_t          *script_boot_output_func;
+         ply_boot_splash_mode_t mode;
+         int                    refresh_rate;
+         ply_keyboard_t        *keyboard;
+@@ -68,6 +69,10 @@
+ void script_lib_plymouth_on_update_status (script_state_t             *state,
+                                            script_lib_plymouth_data_t *data,
+                                            const char                 *new_status);
++void script_lib_plymouth_on_boot_output (script_state_t             *state,
++                                         script_lib_plymouth_data_t *data,
++                                         const char                 *line,
++                                         int                         color);
+ void script_lib_plymouth_on_display_normal (script_state_t             *state,
+                                             script_lib_plymouth_data_t *data);
+ void script_lib_plymouth_on_display_password (script_state_t             *state,
