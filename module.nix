@@ -14,6 +14,8 @@ let
     inherit (cfg)
       palette
       paletteOverrides
+      logo
+      logoSvg
       logoFile
       promptText
       promptFontName
@@ -82,6 +84,33 @@ in
         ~1.67x larger automatically); use this to taste on top of that.
         The logo is sized as a fraction of the screen and scales
         regardless of this setting.
+      '';
+    };
+
+    logo = lib.mkOption {
+      type = lib.types.enum [
+        "snowflake"
+        "flower-of-life"
+      ];
+      default = "snowflake";
+      description = ''
+        Which bundled artwork to draw, recolored to the palette. The
+        snowflake is duotone and keeps both of its tones; the flower of
+        life is line art and is filled with the palette's tint.
+      '';
+    };
+
+    logoSvg = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      example = lib.literalExpression ''./my-mark.svg'';
+      description = ''
+        Your own SVG as the base artwork, recolored to the palette
+        exactly like the bundled line art (masked and filled with its
+        tint), and rendered fresh at every ladder size so it stays sharp
+        at any resolution. Overrides {option}`acidBoot.logo`. Use
+        {option}`acidBoot.logoFile` instead when you want an image used
+        verbatim, colors and all.
       '';
     };
 

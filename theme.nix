@@ -4,6 +4,8 @@
   pkgs,
   palette ? "acid-green",
   paletteOverrides ? { },
+  logo ? "snowflake",
+  logoSvg ? null,
   logoFile ? null,
   uiScale ? 1.0,
   showLog ? true,
@@ -61,15 +63,58 @@ let
     else
       "-fill '#ffffff' " + lib.concatMapStringsSep " " box (lib.range 0 (buildTag - 1));
 
+  # Bundled artwork. The snowflake is duotone, so it recolors by hue
+  # rotation and keeps both tones; the flower of life is white line art,
+  # where a hue rotation does nothing at all (rotating the hue of white
+  # leaves white), so it is masked and filled with the palette's tint
+  # instead. A caller-supplied SVG is treated as line art for the same
+  # reason — that is what a one-color vector almost always is.
+  svgSources = {
+    snowflake = {
+      file = "${pkgs.nixos-icons}/share/icons/hicolor/scalable/apps/nix-snowflake.svg";
+      duotone = true;
+    };
+    flower-of-life = {
+      file = ./theme/flower-of-life.svg;
+      duotone = false;
+    };
+  };
+
+  svgSource =
+    if logoSvg != null then
+      {
+        file = builtins.path {
+          path = logoSvg;
+          name = "acid-boot-custom-logo-svg";
+        };
+        duotone = false;
+      }
+    else
+      svgSources.${logo};
+
+  recolor =
+    size:
+    if svgSource.duotone then
+      "magick base.png ${colors.logoFilter} duo.png"
+    else
+      ''
+        magick base.png -alpha extract mask.png
+        magick -size ${toString size}x${toString size} xc:'${colors.tint}' \
+          mask.png -alpha off -compose CopyOpacity -composite duo.png
+      '';
+
   renderGenerated = size: ''
     rsvg-convert -w ${toString size} -h ${toString size} \
-      ${pkgs.nixos-icons}/share/icons/hicolor/scalable/apps/nix-snowflake.svg \
-      -o base.png
-    magick base.png ${colors.logoFilter} duo.png
+      ${svgSource.file} -o base.png
+    ${recolor size}
     magick duo.png \( +clone -blur 0x${blurFor size} \) -compose screen -composite \
       glow.png
     magick glow.png ${markerFor size} $out/logo-${toString size}.png
   '';
+
+  # Name fragment for the derivation, resolved out here where `logo`
+  # still means the argument rather than the `logo` attribute below.
+  logoName = if logoSvg != null then "custom" else logo;
 
   # builtins.path (rather than bare interpolation) so the image is copied
   # into the store and visible to the sandboxed builder whether the
@@ -103,7 +148,7 @@ rec {
   # nixos-icons' SVG at build time (no binary art in this repo),
   # recolored per palette and glow-composited at each size.
   logos =
-    pkgs.runCommand "acid-nix-logos-${palette}"
+    pkgs.runCommand "acid-nix-logos-${palette}-${logoName}"
       {
         nativeBuildInputs = with pkgs; [
           librsvg
@@ -139,7 +184,7 @@ rec {
         ++ [ ''logo.file = "logo-${toString (lib.last logoSizes)}.png";'' ]
       );
     }
-    // builtins.removeAttrs colors [ "logoFilter" ]
+    // builtins.removeAttrs colors [ "logoFilter" "tint" ]
   );
 
   theme = pkgs.runCommand "plymouth-theme-acid-nix-${palette}" { } ''

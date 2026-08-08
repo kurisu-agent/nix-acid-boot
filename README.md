@@ -7,13 +7,17 @@ on the splash, during boot *and* shutdown.
 
 ![the acid-green splash: logo, live boot-log tail, passphrase prompt](assets/boot.gif)
 
-![the five palettes: acid-green, nix-blue, furry-pink, doom-red, cool-gray](assets/palettes.png)
+![both artworks in all six palettes](assets/palettes.png)
+
+<sub>Two bundled artworks — the Nix snowflake and a flower of life —
+in `acid-green`, `golden-yellow`, `nix-blue`, `furry-pink`, `doom-red`
+and `cool-gray`. Bring your own SVG and it's colored the same way.</sub>
 
 ## What you get
 
-- **Glowing acid-duotone Nix snowflake**, generated at build time from
-  `nixos-icons`' SVG (no binary art in this repo). Fades in, holds,
-  fades out after unlock; shakes on a wrong passphrase.
+- **Glowing artwork generated at build time** from a vector source, so
+  the repo carries no raster art. Fades in, holds, fades out after
+  unlock; shakes on a wrong passphrase.
 - **Live log tail** — the last 5 console lines under the logo, styled
   by severity (`[ OK ]` dark acid, failures red, warnings amber),
   older lines dimming. During shutdown the tail shows the stop
@@ -21,14 +25,18 @@ on the splash, during boot *and* shutdown.
   hidden behind a frozen splash.
 - **LUKS passphrase dialog** with configurable label (default
   `Enter Password`), asterisk bullets, and a blinking cursor.
-- **Your own image.** Point `acidBoot.logoFile` at any PNG and it
-  replaces the snowflake — used as-is, fitted to the same layout slot
+- **Two bundled artworks** — the Nix snowflake and a flower of life —
+  selected with `acidBoot.logo`, or bring your own SVG with
+  `acidBoot.logoSvg` and it is recolored to the palette and re-rendered
+  crisply at every size.
+- **Or your own image, verbatim.** Point `acidBoot.logoFile` at any PNG
+  and it replaces the artwork — used as-is, fitted to the same layout slot
   with its aspect ratio preserved, so wordmarks and banners work as
   well as square logos. The build derives the whole size ladder from
   it, so it stays sharp on high-DPI panels too.
-- **Five color palettes** — `acid-green`, `nix-blue`, `furry-pink`,
-  `doom-red`, `cool-gray` — recoloring the logo and every text element
-  together, and `acidBoot.paletteOverrides` takes your own RGB for any
+- **Six color palettes** — `acid-green`, `golden-yellow`, `nix-blue`,
+  `furry-pink`, `doom-red`, `cool-gray` — recoloring the artwork and
+  every text element together, and `acidBoot.paletteOverrides` takes your own RGB for any
   individual element (or the logo's recolor filter).
 - **Turn bits off.** `showLog = false` for a quiet logo-and-prompt
   splash, `animations = false` for a completely static one, `scale` to
@@ -96,7 +104,8 @@ the override becomes a harmless no-op.
   acidBoot = {
     enable = true;
     palette = "nix-blue";                     # or acid-green (default),
-                                              # furry-pink, doom-red, cool-gray
+                                              # golden-yellow, furry-pink, doom-red, cool-gray
+    logo = "flower-of-life";                  # or snowflake (default)
     paletteOverrides = {
       promptColor = "0.90, 0.50, 0.10";       # any element, your RGB
     };
@@ -109,7 +118,9 @@ the override becomes a harmless no-op.
 | Option | Default | Notes |
 |---|---|---|
 | `acidBoot.enable` | `false` | |
-| `acidBoot.palette` | `"acid-green"` | one of the five named palettes |
+| `acidBoot.palette` | `"acid-green"` | one of the six named palettes |
+| `acidBoot.logo` | `"snowflake"` | bundled artwork: `snowflake` or `flower-of-life` |
+| `acidBoot.logoSvg` | `null` | your own SVG, recolored to the palette and re-rendered at every size |
 | `acidBoot.paletteOverrides` | `{ }` | per-color RGB / logo-filter overrides, merged over the palette |
 | `acidBoot.logoFile` | `null` | your own image instead of the snowflake; used as-is, fitted to the layout slot, aspect preserved |
 | `acidBoot.showLog` | `true` | live boot-log tail; `false` also drops the patched plymouth entirely |

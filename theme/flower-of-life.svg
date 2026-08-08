@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="-2500 -2500 5000 5000" fill="none" stroke="#ffffff" stroke-width="18">
+  <defs>
+    <clipPath id="b"><use xlink:href="#c"/></clipPath>
+  </defs>
+  <path d="M 0,0 m -2453,0 a 2453,2453 0 1,0 4906,0 a 2453,2453 0 1,0 -4906,0"/>
+  <path d="M 0,0 m -2340,0 a 2340,2340 0 1,0 4680,0 a 2340,2340 0 1,0 -4680,0"/>
+  <path id="z" d="M 0,0 m -780,0 a 780,780 0 1,0 1560,0 a 780,780 0 1,0 -1560,0"/>
+  <g id="t">
+    <g id="s" transform="translate(0,780)">
+      <path d="M 0,0 m -780,0 a 780,780 0 1,0 1560,0 a 780,780 0 1,0 -1560,0"/>
+      <g id="a">
+        <path id="c" d="M 0,780 m -780,0 a 780,780 0 1,0 1560,0 a 780,780 0 1,0 -1560,0"/>
+        <g clip-path="url(#b)">
+          <path d="M 675.5,1170 m -780,0 a 780,780 0 1,0 1560,0 a 780,780 0 1,0 -1560,0"/>
+          <path d="M -675.5,1170 m -780,0 a 780,780 0 1,0 1560,0 a 780,780 0 1,0 -1560,0"/>
+          <path d="M 675.5,1950 m -780,0 a 780,780 0 1,0 1560,0 a 780,780 0 1,0 -1560,0"/>
+          <path d="M -675.5,1950 m -780,0 a 780,780 0 1,0 1560,0 a 780,780 0 1,0 -1560,0"/>
+          <path d="M 0,1560 m -780,0 a 780,780 0 1,0 1560,0 a 780,780 0 1,0 -1560,0"/>
+        </g>
+      </g>
+      <use x="675.5" y="-390" xlink:href="#a"/>
+    </g>
+    <use transform="rotate(60)" xlink:href="#s"/>
+  </g>
+  <use transform="rotate(120)" xlink:href="#t"/>
+  <use transform="rotate(240)" xlink:href="#t"/>
+</svg>
