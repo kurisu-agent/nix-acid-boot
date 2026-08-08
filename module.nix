@@ -74,6 +74,24 @@ in
       '';
     };
 
+    deviceScale = lib.mkOption {
+      type = lib.types.nullOr lib.types.ints.positive;
+      default = 1;
+      example = null;
+      description = ''
+        Plymouth's HiDPI device scale. Left to itself plymouth copies
+        Mutter's heuristic — above ~1.625x the "perfect" scale for the
+        panel's DPI it picks 2, then draws the theme at *half*
+        resolution and upscales it. On a 254 DPI laptop panel that means
+        a 2880x1800 screen rendered at 1440x900, which looks soft next
+        to the crisp Esc details view.
+        This theme sizes everything from the screen dimensions already,
+        so it wants the real resolution: the default of 1 pins native
+        rendering. Set to `null` to leave plymouth's auto-detection
+        alone, or to 2 to opt back into upscaling.
+      '';
+    };
+
     scale = lib.mkOption {
       type = lib.types.float;
       default = 1.0;
@@ -215,6 +233,7 @@ in
       theme = lib.mkDefault "acid-nix";
       themePackages = [ acid.theme ];
       font = lib.mkDefault (lib.head cfg.fontFiles);
+      extraConfig = lib.mkIf (cfg.deviceScale != null) "DeviceScale=${toString cfg.deviceScale}";
     };
 
     # The stock module ships exactly boot.plymouth.font into the initrd's

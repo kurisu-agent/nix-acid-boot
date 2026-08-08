@@ -41,12 +41,15 @@ and `cool-gray`. Bring your own SVG and it's colored the same way.</sub>
 - **Turn bits off.** `showLog = false` for a quiet logo-and-prompt
   splash, `animations = false` for a completely static one, `scale` to
   size the text to taste.
-- **Sharp on high-DPI panels.** Plymouth's only scaler is a bare
-  bilinear sample, so a single large logo visibly aliases once it's
-  scaled down more than ~2x. The build ships a ladder of pre-rendered
-  sizes (256–1024, glow radius scaled to match) and the theme picks the
-  nearest one above the target, keeping the runtime downscale under
-  ~1.4x on everything from 768p to 5K.
+- **Sharp on high-DPI panels**, which takes defeating two separate
+  things. Plymouth copies Mutter's HiDPI heuristic and, past ~1.625x the
+  ideal scale for the panel, draws the theme at *half* resolution and
+  upscales the result — so `acidBoot.deviceScale` pins native rendering
+  by default. And its only scaler is a bare bilinear sample, so a single
+  large logo visibly aliases once it's scaled down more than ~2x — so
+  the build ships a ladder of pre-rendered sizes (256–1024, glow radius
+  scaled to match) and the theme picks the nearest one above the target,
+  keeping the runtime downscale under ~1.4x from 768p to 5K.
 - **Esc** still toggles plymouth's full details view at any time, and
   `plymouth.enable=0` appended to the kernel command line (hold `Space`
   at startup, press `e` on the boot entry) disables the splash for that
@@ -126,6 +129,7 @@ the override becomes a harmless no-op.
 | `acidBoot.showLog` | `true` | live boot-log tail; `false` also drops the patched plymouth entirely |
 | `acidBoot.animations` | `true` | fade in/out, shake on a wrong passphrase, blinking cursor |
 | `acidBoot.scale` | `1.0` | extra multiplier on text/spacing (the theme already tracks panel height) |
+| `acidBoot.deviceScale` | `1` | pins native rendering; plymouth otherwise halves the resolution on HiDPI panels and upscales. `null` restores its auto-detection |
 | `acidBoot.buildTag` | `0` | draw N small squares on the logo — a "which build booted?" marker while iterating |
 | `acidBoot.promptText` | `"Enter Password"` | e.g. `"パスワードを入力"` |
 | `acidBoot.promptFontName` | `"JetBrains Mono"` | fontconfig family for prompt + bullets |
