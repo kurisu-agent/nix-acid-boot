@@ -22,12 +22,18 @@ passphrase dialog — is the real theme.</sub>
   hidden behind a frozen splash.
 - **LUKS passphrase dialog** with configurable label (default
   `Enter Password`), asterisk bullets, and a blinking cursor.
+- **Your own image.** Point `acidBoot.logoFile` at any PNG and it
+  replaces the snowflake — used as-is, fitted to the same layout slot
+  with its aspect ratio preserved, so wordmarks and banners work as
+  well as square logos. The build derives the whole size ladder from
+  it, so it stays sharp on high-DPI panels too.
 - **Five color palettes** — `acid-green`, `nix-blue`, `furry-pink`,
   `doom-red`, `cool-gray` — recoloring the logo and every text element
-  together, plus **full customization**: override any color (or the
-  logo recolor filter) with your own RGB values via
-  `acidBoot.paletteOverrides`, or drop in your own image entirely with
-  `acidBoot.logoFile` (any aspect ratio; it's fitted, not squashed).
+  together, and `acidBoot.paletteOverrides` takes your own RGB for any
+  individual element (or the logo's recolor filter).
+- **Turn bits off.** `showLog = false` for a quiet logo-and-prompt
+  splash, `animations = false` for a completely static one, `scale` to
+  size the text to taste.
 - **Sharp on high-DPI panels.** Plymouth's only scaler is a bare
   bilinear sample, so a single large logo visibly aliases once it's
   scaled down more than ~2x. The build ships a ladder of pre-rendered
@@ -82,6 +88,10 @@ style by severity. The module builds plymouth with this patch via
 | `acidBoot.palette` | `"acid-green"` | one of the five named palettes |
 | `acidBoot.paletteOverrides` | `{ }` | per-color RGB / logo-filter overrides, merged over the palette |
 | `acidBoot.logoFile` | `null` | your own image instead of the snowflake; used as-is, fitted to the layout slot, aspect preserved |
+| `acidBoot.showLog` | `true` | live boot-log tail; `false` also drops the patched plymouth entirely |
+| `acidBoot.animations` | `true` | fade in/out, shake on a wrong passphrase, blinking cursor |
+| `acidBoot.scale` | `1.0` | extra multiplier on text/spacing (the theme already tracks panel height) |
+| `acidBoot.buildTag` | `0` | draw N small squares on the logo — a "which build booted?" marker while iterating |
 | `acidBoot.promptText` | `"Enter Password"` | e.g. `"パスワードを入力"` |
 | `acidBoot.promptFontName` | `"JetBrains Mono"` | fontconfig family for prompt + bullets |
 | `acidBoot.logFontName` | `"JetBrains Mono"` | fontconfig family for the log tail |
