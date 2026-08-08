@@ -136,12 +136,19 @@ fun log_redraw() {
   }
 }
 
-fun boot_output_callback(line, color) {
+# `replace` is set for lines the writer redraws in place with a carriage
+# return — systemd's "A stop job is running for ... (5s / 1min 30s)"
+# ticks once a second that way. Overwrite the last line rather than
+# scrolling, so one countdown stays one line instead of flooding the
+# tail and pushing everything else off it.
+fun boot_output_callback(line, color, replace) {
   if (String(line).Length() > log.max_chars)
     line = String(line).SubString(0, log.max_chars - 3) + "...";
-  for (i = 0; i < log.count - 1; i++) {
-    log.lines[i] = log.lines[i + 1];
-    log.colors[i] = log.colors[i + 1];
+  if (!replace) {
+    for (i = 0; i < log.count - 1; i++) {
+      log.lines[i] = log.lines[i + 1];
+      log.colors[i] = log.colors[i + 1];
+    }
   }
   log.lines[log.count - 1] = line;
   log.colors[log.count - 1] = color;

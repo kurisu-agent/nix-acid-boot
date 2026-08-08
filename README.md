@@ -1,14 +1,13 @@
 # nix-acid-boot
 
-An acid-green Nix snowflake [Plymouth](https://www.freedesktop.org/wiki/Software/Plymouth/)
-boot splash for NixOS — with a **live tail of the boot log** rendered
-right on the splash, during boot *and* shutdown.
+An acid-green (and other colors) Nix snowflake
+[Plymouth](https://www.freedesktop.org/wiki/Software/Plymouth/) boot
+splash for NixOS — with a **live tail of the boot log** rendered right
+on the splash, during boot *and* shutdown.
 
 ![the acid-green splash: logo, live boot-log tail, passphrase prompt](assets/boot.gif)
 
-<sub>Recorded on a VM. The log lines are synthetic so the demo is
-reproducible; everything else — the fade, the severity colouring, the
-passphrase dialog — is the real theme.</sub>
+![the five palettes: acid-green, nix-blue, furry-pink, doom-red, cool-gray](assets/palettes.png)
 
 ## What you get
 

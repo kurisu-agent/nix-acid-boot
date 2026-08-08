@@ -1,6 +1,6 @@
 diff -ruN a/src/plugins/splash/script/plugin.c b/src/plugins/splash/script/plugin.c
 --- a/src/plugins/splash/script/plugin.c	2026-08-08 08:52:13.971977537 +0900
-+++ b/src/plugins/splash/script/plugin.c	2026-08-08 11:30:01.813861947 +0900
++++ b/src/plugins/splash/script/plugin.c	2026-08-08 13:27:25.022940018 +0900
 @@ -101,7 +101,11 @@
  
          char                          *monospace_font;
@@ -30,7 +30,7 @@ diff -ruN a/src/plugins/splash/script/plugin.c b/src/plugins/splash/script/plugi
          free (plugin->script_filename);
          free (plugin->image_dir);
          free (plugin->monospace_font);
-@@ -715,6 +722,77 @@
+@@ -715,6 +722,104 @@
  }
  
  static void
@@ -86,21 +86,48 @@ diff -ruN a/src/plugins/splash/script/plugin.c b/src/plugins/splash/script/plugi
 +                        plugin->script_ansi_code = 0;
 +                        continue;
 +                }
-+                if (c == '\n') {
++                /* '\n' ends a line; '\r' means the writer is about to
++                 * redraw the same line in place (systemd's "A stop job is
++                 * running for ... (5s / 1min 30s)" spinner does this once
++                 * a second). Both complete a line, but a '\r' one is
++                 * flagged so the theme can overwrite its predecessor
++                 * instead of scrolling. Without this the spinner never
++                 * terminates a line at all and every update accretes into
++                 * one long garbage string. */
++                if (c == '\n' || c == '\r') {
 +                        if (ply_buffer_get_size (plugin->script_line_buffer) > 0) {
 +                                script_lib_plymouth_on_boot_output (plugin->script_state,
 +                                                                    plugin->script_plymouth_lib,
 +                                                                    ply_buffer_get_bytes (plugin->script_line_buffer),
-+                                                                    plugin->script_line_color);
++                                                                    plugin->script_line_color,
++                                                                    c == '\r' ? 1 : 0);
 +                                ply_buffer_clear (plugin->script_line_buffer);
 +                        }
-+                        plugin->script_line_color = 0;
++                        if (c == '\n')
++                                plugin->script_line_color = 0;
 +                        continue;
 +                }
-+                if (c == '\r' || (c > '\0' && c < ' '))
++                if (c > '\0' && c < ' ')
 +                        continue;
-+                if (ply_buffer_get_size (plugin->script_line_buffer) < 512)
-+                        ply_buffer_append_bytes (plugin->script_line_buffer, &c, 1);
++
++                /* A writer that redraws its line in place never sends a
++                 * newline — systemd's "A stop job is running for ...
++                 * (5s / 1min 30s)" ticks once a second that way — and the
++                 * console tty strips its carriage returns before we see
++                 * them, so the text would otherwise accrete into one
++                 * ever-growing string until something unrelated emits a
++                 * newline. Flush at a width no real line reaches, marked
++                 * as a replacement, so such a writer updates a single
++                 * line instead of growing one. */
++                if (ply_buffer_get_size (plugin->script_line_buffer) >= 240) {
++                        script_lib_plymouth_on_boot_output (plugin->script_state,
++                                                            plugin->script_plymouth_lib,
++                                                            ply_buffer_get_bytes (plugin->script_line_buffer),
++                                                            plugin->script_line_color,
++                                                            1);
++                        ply_buffer_clear (plugin->script_line_buffer);
++                }
++                ply_buffer_append_bytes (plugin->script_line_buffer, &c, 1);
 +        }
 +}
 +
@@ -108,7 +135,7 @@ diff -ruN a/src/plugins/splash/script/plugin.c b/src/plugins/splash/script/plugi
  on_boot_output (ply_boot_splash_plugin_t *plugin,
                  const char               *output,
                  size_t                    size)
-@@ -722,6 +800,8 @@
+@@ -722,6 +827,8 @@
          ply_list_t *displays;
          ply_list_node_t *node;
  
@@ -119,7 +146,7 @@ diff -ruN a/src/plugins/splash/script/plugin.c b/src/plugins/splash/script/plugi
  
 diff -ruN a/src/plugins/splash/script/script-lib-plymouth.c b/src/plugins/splash/script/script-lib-plymouth.c
 --- a/src/plugins/splash/script/script-lib-plymouth.c	2026-08-08 08:52:13.972193540 +0900
-+++ b/src/plugins/splash/script/script-lib-plymouth.c	2026-08-08 09:06:29.926087126 +0900
++++ b/src/plugins/splash/script/script-lib-plymouth.c	2026-08-08 13:23:29.374990171 +0900
 @@ -134,6 +134,7 @@
          data->script_hide_message_func = script_obj_new_null ();
          data->script_quit_func = script_obj_new_null ();
@@ -149,26 +176,30 @@ diff -ruN a/src/plugins/splash/script/script-lib-plymouth.c b/src/plugins/splash
          free (data);
  }
  
-@@ -348,6 +356,25 @@
+@@ -348,6 +356,29 @@
          script_obj_unref (ret.object);
  }
  
 +void script_lib_plymouth_on_boot_output (script_state_t             *state,
 +                                         script_lib_plymouth_data_t *data,
 +                                         const char                 *line,
-+                                         int                         color)
++                                         int                         color,
++                                         int                         replace)
 +{
 +        script_obj_t *line_obj = script_obj_new_string (line);
 +        script_obj_t *color_obj = script_obj_new_number (color);
++        script_obj_t *replace_obj = script_obj_new_number (replace);
 +        script_return_t ret = script_execute_object (state,
 +                                                     data->script_boot_output_func,
 +                                                     NULL,
 +                                                     line_obj,
 +                                                     color_obj,
++                                                     replace_obj,
 +                                                     NULL);
 +
 +        script_obj_unref (line_obj);
 +        script_obj_unref (color_obj);
++        script_obj_unref (replace_obj);
 +        script_obj_unref (ret.object);
 +}
 +
@@ -177,7 +208,7 @@ diff -ruN a/src/plugins/splash/script/script-lib-plymouth.c b/src/plugins/splash
  {
 diff -ruN a/src/plugins/splash/script/script-lib-plymouth.h b/src/plugins/splash/script/script-lib-plymouth.h
 --- a/src/plugins/splash/script/script-lib-plymouth.h	2026-08-08 08:52:13.972218317 +0900
-+++ b/src/plugins/splash/script/script-lib-plymouth.h	2026-08-08 09:06:35.687077625 +0900
++++ b/src/plugins/splash/script/script-lib-plymouth.h	2026-08-08 13:23:15.806992454 +0900
 @@ -43,6 +43,7 @@
          script_obj_t          *script_hide_message_func;
          script_obj_t          *script_quit_func;
@@ -186,14 +217,15 @@ diff -ruN a/src/plugins/splash/script/script-lib-plymouth.h b/src/plugins/splash
          ply_boot_splash_mode_t mode;
          int                    refresh_rate;
          ply_keyboard_t        *keyboard;
-@@ -68,6 +69,10 @@
+@@ -68,6 +69,11 @@
  void script_lib_plymouth_on_update_status (script_state_t             *state,
                                             script_lib_plymouth_data_t *data,
                                             const char                 *new_status);
 +void script_lib_plymouth_on_boot_output (script_state_t             *state,
 +                                         script_lib_plymouth_data_t *data,
 +                                         const char                 *line,
-+                                         int                         color);
++                                         int                         color,
++                                         int                         replace);
  void script_lib_plymouth_on_display_normal (script_state_t             *state,
                                              script_lib_plymouth_data_t *data);
  void script_lib_plymouth_on_display_password (script_state_t             *state,
