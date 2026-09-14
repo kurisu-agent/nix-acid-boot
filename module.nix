@@ -22,7 +22,13 @@ let
       logFontName
       ;
     uiScale = cfg.scale;
-    inherit (cfg) showLog animations buildTag;
+    inherit (cfg)
+      columns
+      textWidth
+      showLog
+      animations
+      buildTag
+      ;
   };
 in
 {
@@ -92,15 +98,41 @@ in
       '';
     };
 
+    columns = lib.mkOption {
+      type = lib.types.ints.positive;
+      default = 100;
+      example = 80;
+      description = ''
+        How many characters of the log font fit across the text area.
+        Text is sized from this: the log font is scaled until this many
+        columns span {option}`acidBoot.textWidth` of the narrowest
+        display, and the prompt, entry and spacing follow in proportion.
+        Fewer columns means bigger text. Log lines longer than this are
+        truncated with an ellipsis.
+      '';
+    };
+
+    textWidth = lib.mkOption {
+      type = lib.types.float;
+      default = 0.48;
+      example = 0.6;
+      description = ''
+        Fraction of the narrowest display's width that the text area
+        occupies, centered. With several displays plymouth draws one
+        canvas the size of the largest and centers each display's view
+        in it, so this is measured against the smallest so that a full
+        line is visible on every display.
+      '';
+    };
+
     scale = lib.mkOption {
       type = lib.types.float;
       default = 1.0;
       example = 1.25;
       description = ''
-        Extra multiplier on text and spacing. The theme already scales
-        with the panel (1080p is 1.0, so a 2880x1800 screen renders
-        ~1.67x larger automatically); use this to taste on top of that.
-        The logo is sized as a fraction of the screen and scales
+        Extra multiplier on text and spacing on top of the width fit.
+        Above 1.0 fewer than {option}`acidBoot.columns` characters fit
+        a line. The logo is sized as a fraction of the screen and scales
         regardless of this setting.
       '';
     };

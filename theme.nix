@@ -8,6 +8,8 @@
   logoSvg ? null,
   logoFile ? null,
   uiScale ? 1.0,
+  columns ? 100,
+  textWidth ? 0.48,
   showLog ? true,
   animations ? true,
   buildTag ? 0,
@@ -171,6 +173,8 @@ rec {
     {
       inherit promptText promptFontName logFontName;
       uiScale = toString uiScale;
+      columns = toString columns;
+      textWidth = toString textWidth;
       logEnabled = if showLog then "1" else "0";
       animEnabled = if animations then "1" else "0";
 

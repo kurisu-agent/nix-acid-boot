@@ -38,9 +38,16 @@ and `cool-gray`. Bring your own SVG and it's colored the same way.</sub>
   `furry-pink`, `doom-red`, `cool-gray` — recoloring the artwork and
   every text element together, and `acidBoot.paletteOverrides` takes your own RGB for any
   individual element (or the logo's recolor filter).
+- **Text sized by width, not DPI.** The log font is scaled until
+  `acidBoot.columns` characters (default 100) span `acidBoot.textWidth`
+  of the narrowest display, and everything else follows in proportion —
+  so a full log line is always visible, on a portrait 4K panel as much
+  as on a 1080p laptop, and on every monitor of a multi-head boot
+  (plymouth draws one canvas the size of the largest display and centers
+  the others in it).
 - **Turn bits off.** `showLog = false` for a quiet logo-and-prompt
   splash, `animations = false` for a completely static one, `scale` to
-  size the text to taste.
+  nudge the text size on top of the width fit.
 - **Sharp on high-DPI panels**, which takes defeating two separate
   things. Plymouth copies Mutter's HiDPI heuristic and, past ~1.625x the
   ideal scale for the panel, draws the theme at *half* resolution and
@@ -128,7 +135,9 @@ the override becomes a harmless no-op.
 | `acidBoot.logoFile` | `null` | your own image instead of the snowflake; used as-is, fitted to the layout slot, aspect preserved |
 | `acidBoot.showLog` | `true` | live boot-log tail; `false` also drops the patched plymouth entirely |
 | `acidBoot.animations` | `true` | fade in/out, shake on a wrong passphrase, blinking cursor |
-| `acidBoot.scale` | `1.0` | extra multiplier on text/spacing (the theme already tracks panel height) |
+| `acidBoot.columns` | `100` | characters of the log font that span the text area; text size is solved from this |
+| `acidBoot.textWidth` | `0.48` | width of the text area as a fraction of the narrowest display |
+| `acidBoot.scale` | `1.0` | extra multiplier on text/spacing on top of the width fit |
 | `acidBoot.deviceScale` | `1` | pins native rendering; plymouth otherwise halves the resolution on HiDPI panels and upscales. `null` restores its auto-detection |
 | `acidBoot.buildTag` | `0` | draw N small squares on the logo — a "which build booted?" marker while iterating |
 | `acidBoot.promptText` | `"Enter Password"` | e.g. `"パスワードを入力"` |
