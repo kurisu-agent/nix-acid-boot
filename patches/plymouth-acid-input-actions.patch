@@ -1,0 +1,217 @@
+diff --git a/src/libply-splash-core/ply-input-device.c b/src/libply-splash-core/ply-input-device.c
+index 9602368..242d613 100644
+--- a/src/libply-splash-core/ply-input-device.c
++++ b/src/libply-splash-core/ply-input-device.c
+@@ -142,6 +142,23 @@ apply_key_to_input_buffer (ply_input_device_t *input_device,
+         case XKB_KEY_BackSpace:
+                 ply_buffer_append_bytes (input_buffer, "\177", 1);
+                 break;
++        /* Arrows carry no UTF-8, so the default branch below would drop
++         * them. Emit the same CSI sequences a terminal sends, which is
++         * what the tty input path already delivers: the entry buffer
++         * ignores escape sequences, but splash plugins see them via
++         * validate_input. */
++        case XKB_KEY_Up:
++                ply_buffer_append_bytes (input_buffer, "\033[A", 3);
++                break;
++        case XKB_KEY_Down:
++                ply_buffer_append_bytes (input_buffer, "\033[B", 3);
++                break;
++        case XKB_KEY_Right:
++                ply_buffer_append_bytes (input_buffer, "\033[C", 3);
++                break;
++        case XKB_KEY_Left:
++                ply_buffer_append_bytes (input_buffer, "\033[D", 3);
++                break;
+         case XKB_KEY_NoSymbol:
+                 break;
+         default:
+diff --git a/src/libply-splash-core/ply-keyboard.c b/src/libply-splash-core/ply-keyboard.c
+index dc19f5c..690ba16 100644
+--- a/src/libply-splash-core/ply-keyboard.c
++++ b/src/libply-splash-core/ply-keyboard.c
+@@ -181,6 +181,15 @@ process_line_erase (ply_keyboard_t *keyboard)
+         }
+ }
+ 
++/* One backspace through the regular handlers, exactly as if the key had
++ * been pressed, so the daemon's entry buffer and the splash both follow
++ * along. */
++void
++ply_keyboard_backspace (ply_keyboard_t *keyboard)
++{
++        process_backspace (keyboard);
++}
++
+ static void
+ process_keyboard_input (ply_keyboard_t *keyboard,
+                         const char     *keyboard_input,
+diff --git a/src/libply-splash-core/ply-keyboard.h b/src/libply-splash-core/ply-keyboard.h
+index 101defd..7acc9a6 100644
+--- a/src/libply-splash-core/ply-keyboard.h
++++ b/src/libply-splash-core/ply-keyboard.h
+@@ -74,6 +74,7 @@ void ply_keyboard_stop_watching_for_input (ply_keyboard_t *keyboard);
+ bool ply_keyboard_is_active (ply_keyboard_t *keyboard);
+ ply_renderer_t *ply_keyboard_get_renderer (ply_keyboard_t *keyboard);
+ bool ply_keyboard_get_capslock_state (ply_keyboard_t *keyboard);
++void ply_keyboard_backspace (ply_keyboard_t *keyboard);
+ 
+ #endif
+ 
+diff --git a/src/plugins/splash/script/plugin.c b/src/plugins/splash/script/plugin.c
+index 12b2cdc..d3bc105 100644
+--- a/src/plugins/splash/script/plugin.c
++++ b/src/plugins/splash/script/plugin.c
+@@ -635,8 +635,12 @@ validate_input (ply_boot_splash_plugin_t *plugin,
+                                                           plugin->script_plymouth_lib,
+                                                           entry_text,
+                                                           add_text);
++        /* Upstream returns true here, discarding the script's verdict
++         * whenever the console viewer is unavailable — a theme that
++         * swallows keys (focus moves, button activation) would then leak
++         * them into the passphrase. Honour the script either way. */
+         if (!ply_console_viewer_preferred ())
+-                return true;
++                return ret;
+ 
+         if (strcmp (add_text, "\e") == 0) {
+                 toggle_console_messages (plugin);
+diff --git a/src/plugins/splash/script/script-lib-plymouth.c b/src/plugins/splash/script/script-lib-plymouth.c
+index 7029c3f..e1a3334 100644
+--- a/src/plugins/splash/script/script-lib-plymouth.c
++++ b/src/plugins/splash/script/script-lib-plymouth.c
+@@ -20,9 +20,12 @@
+  * Written by: Charlie Brej <cbrej@cs.man.ac.uk>
+  */
+ #pragma weak ply_keyboard_get_capslock_state
++#pragma weak ply_keyboard_backspace
+ 
+ 
+ #include "ply-boot-splash-plugin.h"
++#include "ply-event-loop.h"
++#include "ply-keyboard.h"
+ #include "ply-utils.h"
+ #include "script.h"
+ #include "script-parse.h"
+@@ -30,6 +33,10 @@
+ #include "script-object.h"
+ #include "script-lib-plymouth.h"
+ #include <assert.h>
++#include <errno.h>
++#include <fcntl.h>
++#include <sys/stat.h>
++#include <unistd.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+@@ -112,6 +119,91 @@ static script_return_t plymouth_get_capslock_state (script_state_t *state,
+         return script_return_obj (obj);
+ }
+ 
++/* Plymouth.RequestAction(name): drop /run/acid-boot/<name>.request so a
++ * systemd .path unit can act on it (power off, reboot to firmware, ...).
++ * The theme only signals intent; what each name does, and whether it is
++ * allowed at all, is decided by the units the system ships. Names are
++ * restricted to [a-z0-9-] so a script can never steer the path. */
++#define ACID_ACTION_DIR "/run/acid-boot"
++
++static script_return_t plymouth_request_action (script_state_t *state,
++                                                void           *user_data)
++{
++        char *name = script_obj_hash_get_string (state->local, "name");
++        char path[sizeof(ACID_ACTION_DIR) + 64];
++        size_t length;
++        int fd;
++        bool ok = false;
++
++        if (name == NULL)
++                return script_return_obj (script_obj_new_number (0));
++
++        length = strlen (name);
++        if (length == 0 || length > 32)
++                goto out;
++        for (size_t i = 0; i < length; i++) {
++                char c = name[i];
++                if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-'))
++                        goto out;
++        }
++
++        if (mkdir (ACID_ACTION_DIR, 0700) < 0 && errno != EEXIST)
++                goto out;
++
++        snprintf (path, sizeof(path), ACID_ACTION_DIR "/%s.request", name);
++        fd = open (path, O_WRONLY | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
++        if (fd < 0)
++                goto out;
++        close (fd);
++        ok = true;
++out:
++        free (name);
++        return script_return_obj (script_obj_new_number (ok ? 1 : 0));
++}
++
++/* Plymouth.ClearEntry(count): erase the pending passphrase by sending
++ * `count` backspaces — the theme passes the character count it was last
++ * shown. Ctrl+U's line erase can't be reused: it walks the keyboard's
++ * line buffer, which Enter has already cleared when the theme acts on an
++ * Enter it swallowed.
++ * Deferred by a 1ms timer (the event loop asserts a non-zero timeout):
++ * the theme calls this from inside its own validate_input handler, and
++ * erasing inline would re-enter the script through display_password
++ * while it is still running. */
++typedef struct
++{
++        ply_keyboard_t *keyboard;
++        int             count;
++} clear_entry_request_t;
++
++static void on_clear_entry_timeout (void             *user_data,
++                                    ply_event_loop_t *loop)
++{
++        clear_entry_request_t *request = user_data;
++
++        for (int i = 0; i < request->count; i++)
++                ply_keyboard_backspace (request->keyboard);
++        free (request);
++}
++
++static script_return_t plymouth_clear_entry (script_state_t *state,
++                                             void           *user_data)
++{
++        script_lib_plymouth_data_t *data = user_data;
++        int count = script_obj_hash_get_number (state->local, "count");
++        clear_entry_request_t *request;
++
++        if (data->keyboard == NULL || ply_keyboard_backspace == NULL || count <= 0)
++                return script_return_obj (script_obj_new_number (0));
++
++        request = malloc (sizeof(clear_entry_request_t));
++        request->keyboard = data->keyboard;
++        request->count = count;
++        ply_event_loop_watch_for_timeout (ply_event_loop_get_default (), 0.001,
++                                          on_clear_entry_timeout, request);
++        return script_return_obj (script_obj_new_number (1));
++}
++
+ script_lib_plymouth_data_t *script_lib_plymouth_setup (script_state_t        *state,
+                                                        ply_boot_splash_mode_t mode,
+                                                        int                    refresh_rate,
+@@ -237,6 +329,18 @@ script_lib_plymouth_data_t *script_lib_plymouth_setup (script_state_t        *st
+                                     &data->script_boot_output_func,
+                                     "function",
+                                     NULL);
++        script_add_native_function (plymouth_hash,
++                                    "ClearEntry",
++                                    plymouth_clear_entry,
++                                    data,
++                                    "count",
++                                    NULL);
++        script_add_native_function (plymouth_hash,
++                                    "RequestAction",
++                                    plymouth_request_action,
++                                    data,
++                                    "name",
++                                    NULL);
+         script_add_native_function (plymouth_hash,
+                                     "GetCapslockState",
+                                     plymouth_get_capslock_state,

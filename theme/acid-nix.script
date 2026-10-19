@@ -82,12 +82,14 @@ if (ui.scale > 4)
 font.label = "";
 font.entry = "";
 font.log = "";
+font.small = "";
 # Shared vertical anchor: dialog and log tail both live here.
 content.y = 0;
 fun apply_scale() {
   font.label = "@promptFontName@ " + Math.Int(18 * ui.scale);
   font.entry = "@promptFontName@ " + Math.Int(22 * ui.scale);
   font.log = "@logFontName@ " + Math.Int(11 * ui.scale);
+  font.small = "@promptFontName@ " + Math.Int(13 * ui.scale);
   content.y = logo.y + logo.h + Math.Int(140 * ui.scale);
 }
 apply_scale();
@@ -219,18 +221,455 @@ fun refresh_callback() {
       logo.sprite.SetX(logo.x);
   }
 
-  # Blinking cursor, only while the dialog is up (~0.6s on, ~0.4s off).
+  # Blinking cursor, only while the dialog is up and the entry has focus
+  # (~0.6s on, ~0.4s off). On a button there is nothing to type into.
   if (state.dialog_up && dialog) {
-    if ((counter % 50) < 30)
+    if (ui.focus < 0 && (counter % 50) < 30)
       dialog.cursor_sprite.SetOpacity(1);
     else
       dialog.cursor_sprite.SetOpacity(0);
+    decode_tick();
+    if ((counter % 10) == 0)
+      caps_update();
+  }
+
+  # Never leave typing hidden if an erase after a privacy toggle stalls.
+  if (privacy.clearing > 0) {
+    privacy.clearing--;
+    if (privacy.clearing == 0 && dialog)
+      sync_slots(1);
+  }
+
+  # A requested action that never happened (no unit shipped for it, or
+  # it failed) must not leave the keyboard dead: hand input back.
+  if (ui.busy > 0) {
+    ui.busy--;
+    if (ui.busy == 0)
+      message_callback("");
   }
 }
 if (anim.enabled)
   Plymouth.SetRefreshFunction(refresh_callback);
 
 #--------------------------------------------------------------- dialog
+#
+# The passphrase screen: prompt, entry row, and an optional row of
+# action buttons under it. Focus is -1 for the entry, else a button
+# index; Down/Tab move to the buttons, Left/Right/Tab walk them, Up (or
+# Tab past the last one) returns, and typing any character jumps back to
+# the entry with that character kept. Keys reach us through
+# validate_input before plymouth acts on them, so returning 0 swallows
+# a key — the patched input layer delivers arrows as "\e[A".."\e[D".
+#
+# Each typed character is a slot in the entry row. In decode style a new
+# slot rains through random glyphs, locks onto one with a bright flash,
+# and settles; backspace glitches the last slot out. The glyph a slot
+# locks onto is random (Math.Random, seeded per boot) and never derived
+# from what was typed, so the row reveals nothing beyond the length —
+# exactly what bullets reveal. Bullet style is the same machinery with a
+# single "*" glyph and no rain.
+#
+# Privacy mode hides even the length, for typing where you might be
+# watched: as soon as anything is typed the row is a fixed privacy.width
+# slots, and every keystroke or backspace re-rains privacy.churn random
+# ones, so each key visibly lands but the row never grows or shrinks.
+# Verify mode is one slot per character as above. The privacy button
+# toggles between them for this boot only; it is where a TPM-keyed
+# fingerprint will be shown, so Verify is never the default when the
+# button exists.
+
+# Shared across callbacks, so declared up here: a name first assigned
+# inside a function is local to that call.
+entry.x = 0;
+entry.y = 0;
+entry.w = 0;
+icon.box = 0;
+icon.rung = "";
+
+ui.focus = -1;
+ui.busy = 0;                    # frames left on a requested action
+@buttonSetup@
+
+decode.enabled = @decodeEnabled@;
+decode.rain = 18;               # frames of rain before a slot locks
+decode.flash = 6;               # frames of bright lock-on
+decode.fade = 12;               # frames for a deleted slot to dissolve
+# Bullets skip the rain but keep the flash: in privacy mode it is the
+# only sign a re-rolled "*" changed at all.
+if (!decode.enabled)
+  decode.rain = 0;
+if (!anim.enabled) {
+  decode.rain = 0;
+  decode.flash = 0;
+}
+@glyphSetup@
+
+privacy.verify = @privacyVerify@;
+privacy.width = 12;
+privacy.churn = 3;
+privacy.idx = -1;               # index of the privacy button, if any
+privacy.clearing = 0;           # frames left erasing after a toggle
+state.bullets = 0;
+for (i = 0; i < btn.count; i++)
+  if (btn.name[i] == "privacy")
+    privacy.idx = i;
+glyphs.ready = 0;
+slots.n = 0;
+dying.n = 8;                    # ring of dissolving sprites
+dying.next = 0;
+for (i = 0; i < dying.n; i++)
+  dying.live[i] = 0;
+caps.shown = -1;
+key.tab = "@tabChar@";
+
+# Weighted pick: glyphs.pick holds each glyph index as many times as its
+# weight (see theme.nix).
+fun rand_glyph() {
+  k = Math.Int(Math.Random() * glyphs.picks);
+  if (k >= glyphs.picks)
+    k = glyphs.picks - 1;
+  return glyphs.pick[k];
+}
+
+# Rendered lazily on the first prompt, once the deferred measurements
+# at the bottom of the file have settled the entry font size.
+fun build_glyphs() {
+  if (glyphs.ready)
+    return 0;
+  glyphs.cell_w = 1;
+  for (i = 0; i < glyphs.count; i++) {
+    glyphs.final[i] = Image.Text(glyphs.set[i], @entryColor@, 1, font.entry);
+    glyphs.rain[i] = Image.Text(glyphs.set[i], @logOkColor@, 1, font.entry);
+    glyphs.lit[i] = Image.Text(glyphs.set[i], 1, 1, 1, 1, font.entry);
+    if (glyphs.final[i].GetWidth() > glyphs.cell_w)
+      glyphs.cell_w = glyphs.final[i].GetWidth();
+  }
+  glyphs.ready = 1;
+}
+
+fun entry_opacity() {
+  if (ui.focus < 0)
+    return 1;
+  return 0.4;
+}
+
+# Glyphs differ in width; centre each in its fixed-width cell.
+fun set_slot_image(i, image) {
+  slots.sprite[i].SetImage(image);
+  slots.sprite[i].SetPosition(
+    entry.x + i * glyphs.cell_w + Math.Int((glyphs.cell_w - image.GetWidth()) / 2),
+    entry.y, 2);
+  slots.sprite[i].SetOpacity(entry_opacity());
+}
+
+fun layout_entry() {
+  entry.w = slots.n * glyphs.cell_w + dialog.cursor_image.GetWidth();
+  entry.x = Math.Int(screen.w / 2 - entry.w / 2);
+  for (i = 0; i < slots.n; i++)
+    set_slot_image(i, slots.image[i]);
+  dialog.cursor_sprite.SetPosition(
+    entry.x + slots.n * glyphs.cell_w + Math.Int(4 * ui.scale), entry.y, 2);
+
+  # In verify mode a faint open eye sits left of the row, so it is never
+  # typed into by accident.
+  if (privacy.idx >= 0 && privacy.verify) {
+    privacy.mark_h = dialog.cursor_image.GetHeight();
+    dialog.verify_mark = Sprite(privacy.icon_plain[1].Scale(privacy.mark_h, privacy.mark_h));
+    dialog.verify_mark.SetPosition(entry.x - privacy.mark_h - Math.Int(10 * ui.scale), entry.y, 2);
+    dialog.verify_mark.SetOpacity(0.6);
+  } else {
+    dialog.verify_mark = NULL;
+  }
+}
+
+# (Re)start a slot's animation on a fresh random glyph: rain first in
+# decode style, else straight to the lock-on flash.
+fun restart_slot(i) {
+  slots.glyph[i] = rand_glyph();
+  slots.age[i] = 0;
+  if (decode.rain > 0)
+    slots.image[i] = glyphs.rain[rand_glyph()];
+  else if (decode.flash > 0)
+    slots.image[i] = glyphs.lit[slots.glyph[i]];
+  else
+    slots.image[i] = glyphs.final[slots.glyph[i]];
+}
+
+fun add_slot() {
+  i = slots.n;
+  restart_slot(i);
+  slots.sprite[i] = Sprite(slots.image[i]);
+  slots.n++;
+}
+
+fun target_slots() {
+  if (state.bullets == 0 || privacy.clearing)
+    return 0;
+  if (privacy.verify)
+    return state.bullets;
+  return privacy.width;
+}
+
+fun churn_slots() {
+  for (j = 0; j < privacy.churn; j++) {
+    i = Math.Int(Math.Random() * slots.n);
+    if (i >= slots.n)
+      i = slots.n - 1;
+    restart_slot(i);
+  }
+}
+
+# Bring the row to the size the mode and length call for. In privacy
+# mode a length change re-rolls a few slots instead.
+fun sync_slots(changed) {
+  n = target_slots();
+  while (slots.n < n)
+    add_slot();
+  while (slots.n > n)
+    drop_slot();
+  if (!privacy.verify && changed && slots.n > 0)
+    churn_slots();
+  layout_entry();
+}
+
+fun drop_slot() {
+  slots.n--;
+  i = slots.n;
+  if (anim.enabled) {
+    d = dying.next;
+    dying.sprite[d] = slots.sprite[i];
+    dying.age[d] = 0;
+    dying.live[d] = 1;
+    dying.next = (d + 1) % dying.n;
+  }
+  slots.sprite[i] = NULL;
+  slots.image[i] = NULL;
+}
+
+fun clear_slots() {
+  for (i = 0; i < slots.n; i++) {
+    slots.sprite[i] = NULL;
+    slots.image[i] = NULL;
+  }
+  slots.n = 0;
+  for (d = 0; d < dying.n; d++) {
+    dying.sprite[d] = NULL;
+    dying.live[d] = 0;
+  }
+}
+
+# Per frame: advance raining slots and dissolve deleted ones.
+fun decode_tick() {
+  for (i = 0; i < slots.n; i++) {
+    a = slots.age[i];
+    if (a <= decode.rain + decode.flash) {
+      if (a < decode.rain) {
+        if ((a % 2) == 0) {
+          slots.image[i] = glyphs.rain[rand_glyph()];
+          set_slot_image(i, slots.image[i]);
+        }
+      } else if (a == decode.rain && decode.rain > 0) {
+        slots.image[i] = glyphs.lit[slots.glyph[i]];
+        set_slot_image(i, slots.image[i]);
+      } else if (a == decode.rain + decode.flash) {
+        slots.image[i] = glyphs.final[slots.glyph[i]];
+        set_slot_image(i, slots.image[i]);
+      }
+      slots.age[i] = a + 1;
+    }
+  }
+  for (d = 0; d < dying.n; d++) {
+    if (dying.live[d]) {
+      dying.age[d]++;
+      if (dying.age[d] >= decode.fade) {
+        dying.sprite[d] = NULL;
+        dying.live[d] = 0;
+      } else {
+        if (glyphs.count > 1)
+          dying.sprite[d].SetImage(glyphs.rain[rand_glyph()]);
+        dying.sprite[d].SetOpacity(entry_opacity() * (1 - dying.age[d] / decode.fade));
+      }
+    }
+  }
+}
+
+fun caps_update() {
+  if (!state.dialog_up)
+    return 0;
+  on = Plymouth.GetCapslockState();
+  if (on == caps.shown)
+    return 0;
+  caps.shown = on;
+  if (on) {
+    dialog.caps_image = Image.Text("Caps Lock", @logWarnColor@, 1, font.small);
+    dialog.caps_sprite = Sprite(dialog.caps_image);
+    dialog.caps_sprite.SetPosition(
+      screen.w / 2 - dialog.caps_image.GetWidth() / 2,
+      entry.y + dialog.cursor_image.GetHeight() + Math.Int(10 * ui.scale), 2);
+  } else {
+    dialog.caps_sprite = NULL;
+  }
+}
+
+fun build_buttons() {
+  if (btn.count == 0)
+    return 0;
+  icon.box = Math.Int(40 * ui.scale);
+  @iconPicker@
+  btn.gap = Math.Int(icon.box * 2.2);
+  btn.x0 = Math.Int(screen.w / 2 - ((btn.count - 1) * btn.gap + icon.box) / 2);
+  btn.y = entry.y + dialog.cursor_image.GetHeight() + Math.Int(64 * ui.scale);
+  for (i = 0; i < btn.count; i++) {
+    dialog.btn_plain[i] = Sprite(Image("btn-" + btn.name[i] + "-plain-" + icon.rung + ".png").Scale(icon.box, icon.box));
+    dialog.btn_lit[i] = Sprite(Image("btn-" + btn.name[i] + "-lit-" + icon.rung + ".png").Scale(icon.box, icon.box));
+    dialog.btn_plain[i].SetPosition(btn.x0 + i * btn.gap, btn.y, 2);
+    dialog.btn_lit[i].SetPosition(btn.x0 + i * btn.gap, btn.y, 3);
+  }
+  # The privacy toggle swaps between a closed eye (0, private) and an
+  # open one (1, verify).
+  if (privacy.idx >= 0) {
+    privacy.icon_plain[0] = Image("btn-privacy-plain-" + icon.rung + ".png").Scale(icon.box, icon.box);
+    privacy.icon_lit[0] = Image("btn-privacy-lit-" + icon.rung + ".png").Scale(icon.box, icon.box);
+    privacy.icon_plain[1] = Image("btn-privacy-verify-plain-" + icon.rung + ".png").Scale(icon.box, icon.box);
+    privacy.icon_lit[1] = Image("btn-privacy-verify-lit-" + icon.rung + ".png").Scale(icon.box, icon.box);
+    show_privacy_icon();
+  }
+}
+
+fun show_privacy_icon() {
+  dialog.btn_plain[privacy.idx].SetImage(privacy.icon_plain[privacy.verify]);
+  dialog.btn_lit[privacy.idx].SetImage(privacy.icon_lit[privacy.verify]);
+}
+
+fun button_label(i) {
+  if (i == privacy.idx && privacy.verify)
+    return btn.label_verify;
+  return btn.label[i];
+}
+
+# Flip private <-> verify for the rest of this boot. The new mode starts
+# from an empty passphrase with the entry focused: anything typed under
+# the old mode is erased (deferred backspaces from the patched plymouth),
+# and their echoes are ignored until the count reaches zero.
+fun toggle_privacy() {
+  privacy.verify = 1 - privacy.verify;
+  show_privacy_icon();
+  if (state.bullets > 0 && Plymouth.ClearEntry(state.bullets))
+    privacy.clearing = 50;      # frames; a fallback should the erase stall
+  clear_slots();
+  set_focus(-1);
+  sync_slots(0);
+}
+
+fun set_focus(f) {
+  ui.focus = f;
+  for (i = 0; i < btn.count; i++) {
+    if (i == f) {
+      dialog.btn_lit[i].SetOpacity(1);
+      dialog.btn_plain[i].SetOpacity(0);
+    } else {
+      dialog.btn_lit[i].SetOpacity(0);
+      dialog.btn_plain[i].SetOpacity(0.45);
+    }
+  }
+  if (f >= 0) {
+    dialog.btn_label_image = Image.Text(button_label(f), @promptColor@, 1, font.small);
+    dialog.btn_label = Sprite(dialog.btn_label_image);
+    dialog.btn_label.SetPosition(
+      btn.x0 + f * btn.gap + icon.box / 2 - dialog.btn_label_image.GetWidth() / 2,
+      btn.y + icon.box + Math.Int(10 * ui.scale), 2);
+  } else {
+    dialog.btn_label = NULL;
+  }
+  for (i = 0; i < slots.n; i++)
+    slots.sprite[i].SetOpacity(entry_opacity());
+  # Static splash (no refresh): show a steady cursor on the entry only.
+  if (!anim.enabled) {
+    if (f < 0)
+      dialog.cursor_sprite.SetOpacity(1);
+    else
+      dialog.cursor_sprite.SetOpacity(0);
+  }
+}
+
+fun build_dialog() {
+  # Ignore the caller's prompt (systemd-cryptsetup names the disk) —
+  # keep it generic.
+  dialog.prompt_image = Image.Text("@promptText@", @promptColor@, 1, font.label);
+  dialog.prompt_sprite = Sprite(dialog.prompt_image);
+  dialog.prompt_sprite.SetPosition(
+    screen.w / 2 - dialog.prompt_image.GetWidth() / 2,
+    content.y, 2);
+
+  build_glyphs();
+  dialog.cursor_image = Image.Text("_", @entryColor@, 1, font.entry);
+  dialog.cursor_sprite = Sprite(dialog.cursor_image);
+  entry.y = content.y + dialog.prompt_image.GetHeight() + Math.Int(24 * ui.scale);
+
+  build_buttons();
+  caps.shown = -1;
+  set_focus(-1);
+}
+
+fun activate(i) {
+  if (i == privacy.idx) {
+    toggle_privacy();
+    return 0;
+  }
+  if (Plymouth.RequestAction(btn.name[i])) {
+    ui.busy = 500;              # ~10s, then input comes back
+    message_callback(btn.label[i] + " ...");
+  }
+}
+
+fun validate_input_callback(entry_text, add_text) {
+  if (!state.dialog_up)
+    return 1;
+  if (ui.busy > 0)
+    return 0;
+
+  is_seq = (String(add_text).CharAt(0) == "\e" && String(add_text).Length() > 1);
+
+  if (ui.focus < 0) {
+    if (btn.count > 0 && (add_text == "\e[B" || add_text == key.tab)) {
+      set_focus(0);
+      return 0;
+    }
+    # Never let a tab or a stray escape sequence into the passphrase.
+    if (add_text == key.tab || is_seq)
+      return 0;
+    return 1;
+  }
+
+  if (add_text == "\n") {
+    activate(ui.focus);
+    return 0;
+  }
+  if (add_text == "\e[C" || add_text == key.tab) {
+    if (ui.focus + 1 < btn.count)
+      set_focus(ui.focus + 1);
+    else if (add_text == key.tab)
+      set_focus(-1);
+    return 0;
+  }
+  if (add_text == "\e[D") {
+    if (ui.focus > 0)
+      set_focus(ui.focus - 1);
+    return 0;
+  }
+  if (add_text == "\e[A") {
+    set_focus(-1);
+    return 0;
+  }
+  if (is_seq)
+    return 0;
+  # Lone Esc still toggles plymouth's details view.
+  if (add_text == "\e")
+    return 1;
+  # Anything printable: back to the entry, keeping the character.
+  set_focus(-1);
+  return 1;
+}
 
 fun display_password_callback(prompt_text, bullet_count) {
   # A re-prompt inside the grace window means the last attempt failed.
@@ -241,35 +680,39 @@ fun display_password_callback(prompt_text, bullet_count) {
   state.mode = "hold";
   state.opacity = 1;
   state.had_password = 1;
-  state.dialog_up = 1;
   log.visible = 0;
   log_redraw();
 
-  # Ignore the caller's prompt (systemd-cryptsetup names the disk) —
-  # keep it generic.
-  dialog.prompt_image = Image.Text("@promptText@", @promptColor@, 1, font.label);
-  dialog.prompt_sprite = Sprite(dialog.prompt_image);
-  dialog.prompt_sprite.SetPosition(
-    screen.w / 2 - dialog.prompt_image.GetWidth() / 2,
-    content.y, 2);
+  if (!state.dialog_up) {
+    state.dialog_up = 1;
+    build_dialog();
+  }
 
-  bullets = "";
-  for (i = 0; i < bullet_count; i++)
-    bullets += "*";
-  dialog.bullet_image = Image.Text(bullets, @entryColor@, 1, font.entry);
-  dialog.cursor_image = Image.Text("_", @entryColor@, 1, font.entry);
-  entry.w = dialog.bullet_image.GetWidth() + dialog.cursor_image.GetWidth();
-  entry.x = screen.w / 2 - entry.w / 2;
-  entry.y = content.y + dialog.prompt_image.GetHeight() + Math.Int(24 * ui.scale);
+  if (privacy.clearing) {
+    state.bullets = bullet_count;
+    if (bullet_count == 0)
+      privacy.clearing = 0;
+    sync_slots(0);
+    return 0;
+  }
 
-  dialog.bullet_sprite = Sprite(dialog.bullet_image);
-  dialog.bullet_sprite.SetPosition(entry.x, entry.y, 2);
-  dialog.cursor_sprite = Sprite(dialog.cursor_image);
-  dialog.cursor_sprite.SetPosition(entry.x + dialog.bullet_image.GetWidth() + Math.Int(4 * ui.scale), entry.y, 2);
+  # Backspace never passes through validate_input; any edit means the
+  # user is typing, so the entry takes focus back.
+  changed = (bullet_count != state.bullets);
+  if (changed && ui.focus >= 0)
+    set_focus(-1);
+  state.bullets = bullet_count;
+  sync_slots(changed);
+  caps_update();
 }
 
 fun display_normal_callback() {
-  dialog = null;
+  clear_slots();
+  state.bullets = 0;
+  privacy.clearing = 0;
+  ui.focus = -1;
+  ui.busy = 0;
+  dialog = NULL;
   state.dialog_up = 0;
   log.visible = 1;
   log_redraw();
@@ -282,6 +725,7 @@ fun display_normal_callback() {
 
 Plymouth.SetDisplayPasswordFunction(display_password_callback);
 Plymouth.SetDisplayNormalFunction(display_normal_callback);
+Plymouth.SetValidateInputFunction(validate_input_callback);
 
 #-------------------------------------------------------------- messages
 

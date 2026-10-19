@@ -28,7 +28,57 @@ let
       showLog
       animations
       buildTag
+      buttons
+      buttonLabels
+      entryStyle
+      decodeGlyphs
+      privacyDefault
       ;
+  };
+
+  # Buttons backed by a systemd action; `privacy` is handled in-theme.
+  actionButtons = lib.filter (b: b != "privacy") cfg.buttons;
+
+  # What each passphrase-screen button does once the theme drops its
+  # /run/acid-boot/<name>.request. The request is removed first so a
+  # failed action can't retrigger the path unit in a loop.
+  actionCommands = sd: {
+    poweroff = [ "${sd}/bin/systemctl --no-block poweroff" ];
+    # menu-force: systemd-boot shows its menu with no timeout, once.
+    bootmenu = [
+      "${sd}/bin/bootctl set-timeout-oneshot menu-force"
+      "${sd}/bin/systemctl --no-block reboot"
+    ];
+    firmware = [
+      "${sd}/bin/bootctl reboot-to-firmware true"
+      "${sd}/bin/systemctl --no-block reboot"
+    ];
+  };
+
+  actionUnits = sd: {
+    paths = lib.listToAttrs (
+      map (name: {
+        name = "acid-boot-${name}";
+        value = {
+          wantedBy = [ "sysinit.target" ];
+          unitConfig.DefaultDependencies = false;
+          pathConfig.PathExists = "/run/acid-boot/${name}.request";
+        };
+      }) actionButtons
+    );
+    services = lib.listToAttrs (
+      map (name: {
+        name = "acid-boot-${name}";
+        value = {
+          unitConfig.DefaultDependencies = false;
+          serviceConfig = {
+            Type = "oneshot";
+            ExecStartPre = "${pkgs.coreutils}/bin/rm -f /run/acid-boot/${name}.request";
+            ExecStart = (actionCommands sd).${name};
+          };
+        };
+      }) actionButtons
+    );
   };
 in
 {
@@ -241,6 +291,108 @@ in
       '';
     };
 
+    buttons = lib.mkOption {
+      type = lib.types.listOf (
+        lib.types.enum [
+          "privacy"
+          "poweroff"
+          "bootmenu"
+          "firmware"
+        ]
+      );
+      default = [ ];
+      example = [
+        "privacy"
+        "poweroff"
+        "bootmenu"
+        "firmware"
+      ];
+      description = ''
+        Buttons under the passphrase entry, in this order. Down or Tab
+        moves focus to them, Left/Right/Tab walk them, Up returns to the
+        entry, Enter activates; typing any character goes back to the
+        entry. `privacy` toggles between private and verify display for
+        this boot (see {option}`acidBoot.privacyDefault`); `poweroff`
+        powers off; `bootmenu` reboots into the systemd-boot menu (shown
+        once, no timeout) for picking an older generation; `firmware`
+        reboots into the UEFI setup screen. All but `privacy` need
+        systemd in the initrd.
+      '';
+    };
+
+    privacyDefault = lib.mkOption {
+      type = lib.types.nullOr (
+        lib.types.enum [
+          "private"
+          "verify"
+        ]
+      );
+      default = null;
+      description = ''
+        How the entry starts out on every boot. `private` hides even the
+        passphrase length: once anything is typed the row is a fixed
+        width, and each keystroke re-rolls a few of its glyphs. `verify`
+        shows one glyph per character. `null` means `private` when the
+        `privacy` button is enabled (so it can be flipped per boot) and
+        `verify` otherwise, which is the classic one-per-character row.
+      '';
+    };
+
+    buttonLabels = lib.mkOption {
+      type = lib.types.attrsOf lib.types.str;
+      default = { };
+      example = {
+        privacy = "プライベート";
+        privacy-verify = "確認";
+        poweroff = "電源オフ";
+        bootmenu = "ブートメニュー";
+        firmware = "UEFI設定";
+      };
+      description = ''
+        Labels shown under the focused button, merged over the English
+        defaults. `privacy-verify` is the privacy button's label while in
+        verify mode. Must be drawable by
+        {option}`acidBoot.promptFontName` and contain no double quotes.
+      '';
+    };
+
+    entryStyle = lib.mkOption {
+      type = lib.types.enum [
+        "bullets"
+        "decode"
+      ];
+      default = "bullets";
+      description = ''
+        How typed characters appear. `bullets` is a row of asterisks;
+        `decode` rains each new character through random glyphs before
+        it locks onto one, Matrix-style, and glitches deleted ones out.
+        The glyphs are random per keystroke and per boot, never derived
+        from what is typed; at most they reveal the passphrase's length,
+        and not even that in private mode
+        ({option}`acidBoot.privacyDefault`).
+        Without {option}`acidBoot.animations` it shows the locked glyph
+        straight away.
+      '';
+    };
+
+    decodeGlyphs = lib.mkOption {
+      type = lib.types.nullOr (lib.types.listOf lib.types.str);
+      default = null;
+      example = [
+        "0"
+        "1"
+      ];
+      description = ''
+        Glyph set for `entryStyle = "decode"`, one string per glyph,
+        picked uniformly. `null` mixes Matrix-style half-width katakana
+        with digits, symbols and a ciphertext-looking latin alphabet,
+        weighted to read like the film's rain (mostly kana), when
+        {option}`acidBoot.promptFontName` is a CJK font, else uses just
+        the non-kana glyphs. Glyphs must be drawable by that font; no
+        backslashes.
+      '';
+    };
+
     retainSplash = lib.mkOption {
       type = lib.types.bool;
       default = true;
@@ -254,14 +406,20 @@ in
     };
   };
 
-  config = lib.mkIf cfg.enable {
+  config = lib.mkIf cfg.enable (lib.mkMerge [
+  {
     boot.plymouth = {
       enable = true;
-      # The patch exists solely to feed the log tail. With the tail off
-      # there's nothing to feed, so run stock plymouth and keep the
-      # patched build off the boot path entirely — fewer moving parts,
-      # and it makes `showLog = false` a genuine A/B against upstream.
-      package = if cfg.showLog then acid.plymouth else pkgs.plymouth;
+      # The patches exist to feed the log tail and to give the passphrase
+      # screen its keys and actions. With neither in use there's nothing
+      # for them to do, so run stock plymouth and keep the patched build
+      # off the boot path entirely — fewer moving parts, and it makes
+      # `showLog = false` a genuine A/B against upstream.
+      package =
+        if cfg.showLog || cfg.buttons != [ ] || cfg.entryStyle != "bullets" then
+          acid.plymouth
+        else
+          pkgs.plymouth;
       theme = lib.mkDefault "acid-nix";
       themePackages = [ acid.theme ];
       font = lib.mkDefault (lib.head cfg.fontFiles);
@@ -329,5 +487,27 @@ in
       ""
       "-${config.boot.plymouth.package}/bin/plymouth quit --retain-splash"
     ];
-  };
+  }
+
+  # Button actions. Mainly for the initrd's LUKS prompt; stage 2 gets the
+  # same units so a later prompt (or the shutdown splash) isn't left with
+  # dead buttons.
+  (lib.mkIf (actionButtons != [ ]) {
+    assertions = [
+      {
+        assertion = config.boot.initrd.systemd.enable;
+        message = "acidBoot.buttons needs boot.initrd.systemd.enable.";
+      }
+    ];
+
+    boot.initrd.systemd = actionUnits config.boot.initrd.systemd.package // {
+      storePaths = [
+        "${config.boot.initrd.systemd.package}/bin/bootctl"
+        "${pkgs.coreutils}/bin/rm"
+      ];
+    };
+
+    systemd = actionUnits config.systemd.package;
+  })
+]);
 }

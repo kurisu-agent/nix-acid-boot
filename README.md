@@ -74,6 +74,21 @@ each tagged with the line's dominant SGR foreground color so themes can
 style by severity. The module builds plymouth with this patch via
 `boot.plymouth.package`; expect at most trivial fuzz on version bumps.
 
+A second patch, `patches/plymouth-acid-input-actions.patch`, serves the
+passphrase screen extras below:
+
+- arrow keys reach the theme as `\e[A`..`\e[D` (plymouth's evdev input
+  otherwise drops keys that produce no text; the passphrase buffer
+  already ignores escape sequences, so they can never end up in it);
+- the theme's `validate_input` verdict is honoured even when plymouth's
+  console viewer is unavailable, so a key the theme swallows stays
+  swallowed;
+- `Plymouth.RequestAction(name)` drops `/run/acid-boot/<name>.request`
+  for a systemd `.path` unit to act on (names limited to `[a-z0-9-]`);
+- `Plymouth.ClearEntry(n)` erases the passphrase with `n` backspaces
+  through plymouth's normal handlers, deferred a tick so the theme
+  isn't re-entered mid-callback.
+
 ## The passphrase prompt
 
 Plymouth ships `systemd-ask-password-plymouth.{path,service}` itself and
@@ -95,6 +110,44 @@ This module ships the agent from the initrd's own systemd, repoints the
 unit at it, and clears the conditions and the trigger limit, so LUKS
 prompting works regardless of that race. If nixpkgs fixes it upstream,
 the override becomes a harmless no-op.
+
+## Passphrase screen extras
+
+All opt-in; with the defaults the screen is unchanged.
+
+- **Buttons** (`acidBoot.buttons`): a row of icons under the entry.
+  `↓` or `Tab` moves to them, `←`/`→`/`Tab` walk them, `↑` returns,
+  `Enter` activates, and typing any character jumps back to the entry
+  with it kept. `poweroff` powers off, `bootmenu` reboots into the
+  systemd-boot menu (once, no timeout) to pick an older generation,
+  `firmware` reboots into UEFI setup. The theme only drops a request
+  file; the module ships the initrd (and stage 2) units that act on it.
+  The cursor blinks only while the entry has focus.
+- **Decode entry** (`acidBoot.entryStyle = "decode"`): each character
+  rains through Matrix-style glyphs — mostly half-width kana, plus
+  digits, symbols and a ciphertext-looking latin alphabet — then locks
+  onto one with a white flash; backspace glitches it out. Glyphs are
+  random (seeded per boot), never derived from what you type.
+- **Privacy toggle** (the `privacy` button): *private* mode, the default
+  whenever the button exists, hides even the length — the row is a fixed
+  12 glyphs once anything is typed and each key re-rolls a few of them.
+  *Verify* mode shows one glyph per character. Toggling clears the entry
+  and returns focus to it; the choice lasts for that boot only.
+- **Caps Lock** shows a warning under the entry.
+
+```nix
+acidBoot = {
+  buttons = [ "privacy" "poweroff" "bootmenu" "firmware" ];
+  entryStyle = "decode";
+  buttonLabels = {
+    privacy = "プライベート";
+    privacy-verify = "確認";
+    poweroff = "電源オフ";
+    bootmenu = "ブートメニュー";
+    firmware = "UEFI設定";
+  };
+};
+```
 
 ## Usage
 
@@ -133,7 +186,7 @@ the override becomes a harmless no-op.
 | `acidBoot.logoSvg` | `null` | your own SVG, recolored to the palette and re-rendered at every size |
 | `acidBoot.paletteOverrides` | `{ }` | per-color RGB / logo-filter overrides, merged over the palette |
 | `acidBoot.logoFile` | `null` | your own image instead of the snowflake; used as-is, fitted to the layout slot, aspect preserved |
-| `acidBoot.showLog` | `true` | live boot-log tail; `false` also drops the patched plymouth entirely |
+| `acidBoot.showLog` | `true` | live boot-log tail; `false` also drops the patched plymouth entirely, unless the passphrase extras below need it |
 | `acidBoot.animations` | `true` | fade in/out, shake on a wrong passphrase, blinking cursor |
 | `acidBoot.columns` | `100` | characters of the log font that span the text area; text size is solved from this |
 | `acidBoot.textWidth` | `0.48` | width of the text area as a fraction of the narrowest display |
@@ -145,6 +198,11 @@ the override becomes a harmless no-op.
 | `acidBoot.logFontName` | `"JetBrains Mono"` | fontconfig family for the log tail |
 | `acidBoot.fontFiles` | JetBrains Mono ttf | files shipped into the initrd; must cover the families above |
 | `acidBoot.retainSplash` | `true` | `plymouth quit --retain-splash` handoff |
+| `acidBoot.buttons` | `[ ]` | any of `privacy`, `poweroff`, `bootmenu`, `firmware`, in display order; all but `privacy` need systemd in the initrd |
+| `acidBoot.buttonLabels` | `{ }` | label per button (plus `privacy-verify`), merged over English defaults |
+| `acidBoot.entryStyle` | `"bullets"` | `"decode"` for the Matrix-style entry |
+| `acidBoot.decodeGlyphs` | `null` | custom glyph list for `decode` (uniform picks); `null` is the weighted kana/cipher mix |
+| `acidBoot.privacyDefault` | `null` | `"private"` or `"verify"`; `null` is private with the `privacy` button, else verify |
 
 Non-latin prompt? Set all three font options, e.g.:
 
