@@ -20,7 +20,8 @@
   buttonLabels ? { },
   entryStyle ? "bullets",
   decodeGlyphs ? null,
-  privacyDefault ? null,
+  privacyDefault ? "verify",
+  privacyToggle ? true,
 }:
 
 let
@@ -142,11 +143,8 @@ let
 
   # Passphrase-screen buttons. Each name is also the action the theme
   # requests (Plymouth.RequestAction -> /run/acid-boot/<name>.request);
-  # module.nix ships the units that carry them out. `privacy` is the
-  # exception: a toggle the theme handles itself.
+  # module.nix ships the units that carry them out.
   defaultButtonLabels = {
-    privacy = "Private";
-    privacy-verify = "Verify";
     poweroff = "Power off";
     bootmenu = "Boot menu";
     firmware = "Firmware setup";
@@ -239,8 +237,15 @@ let
         lib.filter (grp: !(grp.cjk or false) || lib.hasInfix "CJK" promptFontName) glyphGroups
       );
 
-  # The privacy toggle has two looks; its "verify" icon is rendered too.
-  iconNames = lib.unique (buttons ++ lib.optional (lib.elem "privacy" buttons) "privacy-verify");
+  # The Tab privacy toggle shows the non-default mode's eye beside the
+  # entry: struck-through for private, open for verify.
+  iconNames = lib.unique (
+    buttons
+    ++ lib.optionals privacyToggle [
+      "privacy"
+      "privacy-verify"
+    ]
+  );
 in
 rec {
   # Plymouth's script plugin feeds console boot output only to its
@@ -330,20 +335,10 @@ rec {
         ++ lib.imap0 (i: name: ''
           btn.name[${toString i}] = "${name}";
           btn.label[${toString i}] = "${labels.${name}}";'') buttons
-        ++ [ ''btn.label_verify = "${labels.privacy-verify}";'' ]
       );
 
-      privacyVerify =
-        let
-          mode =
-            if privacyDefault != null then
-              privacyDefault
-            else if lib.elem "privacy" buttons then
-              "private"
-            else
-              "verify";
-        in
-        if mode == "verify" then "1" else "0";
+      privacyVerify = if privacyDefault == "verify" then "1" else "0";
+      privacyToggle = if privacyToggle then "1" else "0";
 
       decodeEnabled = if entryStyle == "decode" then "1" else "0";
       # Weights become a pick table of glyph indices: rand_glyph() then

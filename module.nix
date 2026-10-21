@@ -33,11 +33,11 @@ let
       entryStyle
       decodeGlyphs
       privacyDefault
+      privacyToggle
       ;
   };
 
-  # Buttons backed by a systemd action; `privacy` is handled in-theme.
-  actionButtons = lib.filter (b: b != "privacy") cfg.buttons;
+  actionButtons = cfg.buttons;
 
   # What each passphrase-screen button does once the theme drops its
   # /run/acid-boot/<name>.request. The request is removed first so a
@@ -294,7 +294,6 @@ in
     buttons = lib.mkOption {
       type = lib.types.listOf (
         lib.types.enum [
-          "privacy"
           "poweroff"
           "bootmenu"
           "firmware"
@@ -302,39 +301,43 @@ in
       );
       default = [ ];
       example = [
-        "privacy"
         "poweroff"
         "bootmenu"
         "firmware"
       ];
       description = ''
-        Buttons under the passphrase entry, in this order. Down or Tab
-        moves focus to them, Left/Right/Tab walk them, Up returns to the
+        Action buttons under the passphrase entry, in this order. Down
+        moves focus to them, Left/Right walk them, Up returns to the
         entry, Enter activates; typing any character goes back to the
-        entry. `privacy` toggles between private and verify display for
-        this boot (see {option}`acidBoot.privacyDefault`); `poweroff`
-        powers off; `bootmenu` reboots into the systemd-boot menu (shown
-        once, no timeout) for picking an older generation; `firmware`
-        reboots into the UEFI setup screen. All but `privacy` need
+        entry. `poweroff` powers off; `bootmenu` reboots into the
+        systemd-boot menu (shown once, no timeout) for picking an older
+        generation; `firmware` reboots into the UEFI setup screen. Needs
         systemd in the initrd.
       '';
     };
 
     privacyDefault = lib.mkOption {
-      type = lib.types.nullOr (
-        lib.types.enum [
-          "private"
-          "verify"
-        ]
-      );
-      default = null;
+      type = lib.types.enum [
+        "private"
+        "verify"
+      ];
+      default = "verify";
       description = ''
-        How the entry starts out on every boot. `private` hides even the
+        How the entry starts out on every boot. `verify` shows one glyph
+        per character, the classic row. `private` hides even the
         passphrase length: once anything is typed the row is a fixed
-        width, and each keystroke re-rolls a few of its glyphs. `verify`
-        shows one glyph per character. `null` means `private` when the
-        `privacy` button is enabled (so it can be flipped per boot) and
-        `verify` otherwise, which is the classic one-per-character row.
+        width, and each keystroke re-rolls a few of its glyphs.
+      '';
+    };
+
+    privacyToggle = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        Let Tab flip between private and verify for the rest of the boot.
+        Toggling clears the entry and focuses it. The default mode shows
+        no indicator; the other one shows its eye left of the entry (a
+        struck-through eye for private, an open eye for verify).
       '';
     };
 
@@ -342,17 +345,14 @@ in
       type = lib.types.attrsOf lib.types.str;
       default = { };
       example = {
-        privacy = "プライベート";
-        privacy-verify = "確認";
         poweroff = "電源オフ";
         bootmenu = "ブートメニュー";
         firmware = "UEFI設定";
       };
       description = ''
         Labels shown under the focused button, merged over the English
-        defaults. `privacy-verify` is the privacy button's label while in
-        verify mode. Must be drawable by
-        {option}`acidBoot.promptFontName` and contain no double quotes.
+        defaults. Must be drawable by {option}`acidBoot.promptFontName`
+        and contain no double quotes.
       '';
     };
 
@@ -416,7 +416,7 @@ in
       # off the boot path entirely — fewer moving parts, and it makes
       # `showLog = false` a genuine A/B against upstream.
       package =
-        if cfg.showLog || cfg.buttons != [ ] || cfg.entryStyle != "bullets" then
+        if cfg.showLog || cfg.buttons != [ ] || cfg.entryStyle != "bullets" || cfg.privacyToggle then
           acid.plymouth
         else
           pkgs.plymouth;

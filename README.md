@@ -116,9 +116,9 @@ the override becomes a harmless no-op.
 All opt-in; with the defaults the screen is unchanged.
 
 - **Buttons** (`acidBoot.buttons`): a row of icons under the entry.
-  `↓` or `Tab` moves to them, `←`/`→`/`Tab` walk them, `↑` returns,
-  `Enter` activates, and typing any character jumps back to the entry
-  with it kept. `poweroff` powers off, `bootmenu` reboots into the
+  `↓` moves to them, `←`/`→` walk them, `↑` returns, `Enter`
+  activates, and typing any character jumps back to the entry with it
+  kept. `poweroff` powers off, `bootmenu` reboots into the
   systemd-boot menu (once, no timeout) to pick an older generation,
   `firmware` reboots into UEFI setup. The theme only drops a request
   file; the module ships the initrd (and stage 2) units that act on it.
@@ -128,20 +128,21 @@ All opt-in; with the defaults the screen is unchanged.
   digits, symbols and a ciphertext-looking latin alphabet — then locks
   onto one with a white flash; backspace glitches it out. Glyphs are
   random (seeded per boot), never derived from what you type.
-- **Privacy toggle** (the `privacy` button): *private* mode, the default
-  whenever the button exists, hides even the length — the row is a fixed
-  12 glyphs once anything is typed and each key re-rolls a few of them.
-  *Verify* mode shows one glyph per character. Toggling clears the entry
-  and returns focus to it; the choice lasts for that boot only.
+- **Privacy toggle** (`Tab`, on by default via `acidBoot.privacyToggle`):
+  flips between *verify* (one glyph per character, the default per
+  `acidBoot.privacyDefault`) and *private*, which hides even the length —
+  the row is a fixed 12 glyphs once anything is typed and each key
+  re-rolls a few of them. Toggling clears the entry and returns focus to
+  it; the choice lasts for that boot only. The default mode shows no
+  indicator; the other shows its eye left of the entry (struck-through
+  for private, open for verify).
 - **Caps Lock** shows a warning under the entry.
 
 ```nix
 acidBoot = {
-  buttons = [ "privacy" "poweroff" "bootmenu" "firmware" ];
+  buttons = [ "poweroff" "bootmenu" "firmware" ];
   entryStyle = "decode";
   buttonLabels = {
-    privacy = "プライベート";
-    privacy-verify = "確認";
     poweroff = "電源オフ";
     bootmenu = "ブートメニュー";
     firmware = "UEFI設定";
@@ -198,11 +199,12 @@ acidBoot = {
 | `acidBoot.logFontName` | `"JetBrains Mono"` | fontconfig family for the log tail |
 | `acidBoot.fontFiles` | JetBrains Mono ttf | files shipped into the initrd; must cover the families above |
 | `acidBoot.retainSplash` | `true` | `plymouth quit --retain-splash` handoff |
-| `acidBoot.buttons` | `[ ]` | any of `privacy`, `poweroff`, `bootmenu`, `firmware`, in display order; all but `privacy` need systemd in the initrd |
-| `acidBoot.buttonLabels` | `{ }` | label per button (plus `privacy-verify`), merged over English defaults |
+| `acidBoot.buttons` | `[ ]` | any of `poweroff`, `bootmenu`, `firmware`, in display order; needs systemd in the initrd |
+| `acidBoot.buttonLabels` | `{ }` | label per button, merged over English defaults |
 | `acidBoot.entryStyle` | `"bullets"` | `"decode"` for the Matrix-style entry |
 | `acidBoot.decodeGlyphs` | `null` | custom glyph list for `decode` (uniform picks); `null` is the weighted kana/cipher mix |
-| `acidBoot.privacyDefault` | `null` | `"private"` or `"verify"`; `null` is private with the `privacy` button, else verify |
+| `acidBoot.privacyDefault` | `"verify"` | starting mode each boot: `"verify"` (one glyph per character) or `"private"` (length hidden) |
+| `acidBoot.privacyToggle` | `true` | `Tab` flips the mode for that boot; the non-default mode shows its eye |
 
 Non-latin prompt? Set all three font options, e.g.:
 
