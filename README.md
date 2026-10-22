@@ -137,6 +137,11 @@ All opt-in; with the defaults the screen is unchanged.
   indicator; the other shows its eye left of the entry (struck-through
   for private, open for verify).
 - **Caps Lock** shows a warning under the entry.
+- **Lockout** (`acidBoot.lockout.schedule`): after failed passphrases the
+  entry is replaced by a countdown before the next try (e.g. three free
+  attempts, then 30 s, 1 min, 2 min, 5 min). Raise systemd-cryptsetup's
+  `tries=` past the free attempts or it gives up first. A pause on the
+  splash, not a security boundary.
 
 ```nix
 acidBoot = {
@@ -205,6 +210,8 @@ acidBoot = {
 | `acidBoot.decodeGlyphs` | `null` | custom glyph list for `decode` (uniform picks); `null` is the weighted kana/cipher mix |
 | `acidBoot.privacyDefault` | `"verify"` | starting mode each boot: `"verify"` (one glyph per character) or `"private"` (length hidden) |
 | `acidBoot.privacyToggle` | `true` | `Tab` flips the mode for that boot; the non-default mode shows its eye |
+| `acidBoot.lockout.schedule` | `[ ]` | seconds to wait after each failed passphrase, last repeating; countdown replaces the entry. Raise systemd-cryptsetup `tries=` past the free attempts |
+| `acidBoot.lockout.text` | `"Retry in"` | label before the countdown |
 
 Non-latin prompt? Set all three font options, e.g.:
 

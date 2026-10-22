@@ -1,6 +1,6 @@
 diff -ruN a/src/plugins/splash/script/plugin.c b/src/plugins/splash/script/plugin.c
---- a/src/plugins/splash/script/plugin.c	2026-08-08 08:52:13.971977537 +0900
-+++ b/src/plugins/splash/script/plugin.c	2026-08-08 15:32:44.582032114 +0900
+--- a/src/plugins/splash/script/plugin.c
++++ b/src/plugins/splash/script/plugin.c
 @@ -101,7 +101,14 @@
  
          char                          *monospace_font;
@@ -187,8 +187,8 @@ diff -ruN a/src/plugins/splash/script/plugin.c b/src/plugins/splash/script/plugi
                  return;
  
 diff -ruN a/src/plugins/splash/script/script-lib-plymouth.c b/src/plugins/splash/script/script-lib-plymouth.c
---- a/src/plugins/splash/script/script-lib-plymouth.c	2026-08-08 08:52:13.972193540 +0900
-+++ b/src/plugins/splash/script/script-lib-plymouth.c	2026-08-08 13:23:29.374990171 +0900
+--- a/src/plugins/splash/script/script-lib-plymouth.c
++++ b/src/plugins/splash/script/script-lib-plymouth.c
 @@ -134,6 +134,7 @@
          data->script_hide_message_func = script_obj_new_null ();
          data->script_quit_func = script_obj_new_null ();
@@ -249,8 +249,8 @@ diff -ruN a/src/plugins/splash/script/script-lib-plymouth.c b/src/plugins/splash
                                              script_lib_plymouth_data_t *data)
  {
 diff -ruN a/src/plugins/splash/script/script-lib-plymouth.h b/src/plugins/splash/script/script-lib-plymouth.h
---- a/src/plugins/splash/script/script-lib-plymouth.h	2026-08-08 08:52:13.972218317 +0900
-+++ b/src/plugins/splash/script/script-lib-plymouth.h	2026-08-08 13:23:15.806992454 +0900
+--- a/src/plugins/splash/script/script-lib-plymouth.h
++++ b/src/plugins/splash/script/script-lib-plymouth.h
 @@ -43,6 +43,7 @@
          script_obj_t          *script_hide_message_func;
          script_obj_t          *script_quit_func;

@@ -35,6 +35,8 @@ let
       privacyDefault
       privacyToggle
       ;
+    lockoutSchedule = cfg.lockout.schedule;
+    lockoutText = cfg.lockout.text;
   };
 
   actionButtons = cfg.buttons;
@@ -341,6 +343,44 @@ in
       '';
     };
 
+    lockout = {
+      schedule = lib.mkOption {
+        type = lib.types.listOf lib.types.ints.unsigned;
+        default = [ ];
+        example = [
+          0
+          0
+          0
+          30
+          60
+          120
+          300
+        ];
+        description = ''
+          Seconds to wait after each failed passphrase, in order; the last
+          entry repeats. While a wait runs, a countdown replaces the entry
+          and typing is ignored (the action buttons still work). Empty
+          disables it. Needs {option}`acidBoot.animations`.
+
+          systemd-cryptsetup gives up after its `tries=` (default 3) and
+          drops to emergency mode, so raise that past the free attempts,
+          e.g. `boot.initrd.luks.devices.<name>.crypttabExtraOpts =
+          [ "tries=10" ]`. This is a pause on the splash, not a security
+          boundary: the LUKS KDF is what makes guessing expensive.
+        '';
+      };
+
+      text = lib.mkOption {
+        type = lib.types.str;
+        default = "Retry in";
+        example = "再試行まで";
+        description = ''
+          Label before the countdown. Must be drawable by
+          {option}`acidBoot.promptFontName`; no double quotes.
+        '';
+      };
+    };
+
     buttonLabels = lib.mkOption {
       type = lib.types.attrsOf lib.types.str;
       default = { };
@@ -449,8 +489,8 @@ in
     #
     # It normally hides because the units are gated on
     # ConditionPathExists=/run/plymouth/pid and get skipped before they
-    # can fail. Diagnosed on a LUKS laptop whose GPU takes ~10s to hand
-    # over a DRM device, which is what made the race visible.
+    # can fail; a GPU that is slow to hand over a DRM device makes the
+    # race visible.
     #
     # Fix: ship the agent from the initrd's own systemd, point the unit
     # at it, and stop the conditions from skipping/limiting the watcher.

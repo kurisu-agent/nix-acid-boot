@@ -224,13 +224,23 @@ fun refresh_callback() {
   # Blinking cursor, only while the dialog is up and the entry has focus
   # (~0.6s on, ~0.4s off). On a button there is nothing to type into.
   if (state.dialog_up && dialog) {
-    if (ui.focus < 0 && (counter % 50) < 30)
+    if (ui.focus < 0 && lockout.frames == 0 && (counter % 50) < 30)
       dialog.cursor_sprite.SetOpacity(1);
     else
       dialog.cursor_sprite.SetOpacity(0);
     decode_tick();
     if ((counter % 10) == 0)
       caps_update();
+  }
+
+  # Count a lockout down; when it ends the entry comes back empty.
+  if (lockout.frames > 0) {
+    lockout.frames--;
+    if (state.dialog_up && dialog) {
+      lockout_draw();
+      if (lockout.frames == 0)
+        layout_entry();
+    }
   }
 
   # Never leave typing hidden if an erase after a privacy toggle stalls.
@@ -304,6 +314,20 @@ if (!anim.enabled) {
   decode.flash = 0;
 }
 @glyphSetup@
+
+# Lockout: after each failed passphrase (detected the same way as the
+# shake — a re-prompt inside the grace window), wait lockout.secs[n] before
+# the next attempt, n counting failures from zero and sticking at the last
+# entry. While it runs the entry is replaced by a countdown and typing is
+# swallowed; the action buttons stay usable. Purely a theme-side pause:
+# the real brute-force cost is the LUKS KDF, and plymouth.enable=0 skips
+# all of this. Needs the refresh loop, so it is off without animations.
+@lockoutSetup@
+lockout.fails = 0;
+lockout.frames = 0;             # frames left; 0 = not locked
+lockout.shown = -1;             # seconds currently drawn
+if (!anim.enabled)
+  lockout.count = 0;
 
 privacy.toggle = @privacyToggle@;  # Tab flips the mode
 privacy.default = @privacyVerify@; # 1 verify, 0 private
@@ -402,7 +426,7 @@ fun add_slot() {
 }
 
 fun target_slots() {
-  if (state.bullets == 0 || privacy.clearing)
+  if (state.bullets == 0 || privacy.clearing || lockout.frames > 0)
     return 0;
   if (privacy.verify)
     return state.bullets;
@@ -490,6 +514,41 @@ fun decode_tick() {
       }
     }
   }
+}
+
+fun lockout_fail() {
+  lockout.fails++;
+  if (lockout.count == 0)
+    return 0;
+  n = lockout.fails - 1;
+  if (n >= lockout.count)
+    n = lockout.count - 1;
+  if (lockout.secs[n] > 0) {
+    lockout.frames = lockout.secs[n] * 50;
+    lockout.shown = -1;
+  }
+}
+
+# The countdown in place of the entry row, redrawn once a second.
+fun lockout_draw() {
+  if (lockout.frames == 0) {
+    dialog.lockout_sprite = NULL;
+    lockout.shown = -1;
+    return 0;
+  }
+  left = Math.Int((lockout.frames + 49) / 50);
+  if (left == lockout.shown)
+    return 0;
+  lockout.shown = left;
+  m = Math.Int(left / 60);
+  s = left - m * 60;
+  pad = "";
+  if (s < 10)
+    pad = "0";
+  dialog.lockout_image = Image.Text("@lockoutText@ " + m + ":" + pad + s, @logWarnColor@, 1, font.entry);
+  dialog.lockout_sprite = Sprite(dialog.lockout_image);
+  dialog.lockout_sprite.SetPosition(
+    screen.w / 2 - dialog.lockout_image.GetWidth() / 2, entry.y, 2);
 }
 
 fun caps_update() {
@@ -618,11 +677,14 @@ fun validate_input_callback(entry_text, add_text) {
     return 0;
 
   is_seq = (String(add_text).CharAt(0) == "\e" && String(add_text).Length() > 1);
+  # During a lockout nothing reaches the passphrase; the buttons and the
+  # Esc details view still work.
+  locked = (lockout.frames > 0);
 
   # Tab flips private <-> verify from anywhere, landing back in the entry.
   # Never let a tab into the passphrase either way.
   if (add_text == key.tab) {
-    if (privacy.toggle)
+    if (privacy.toggle && !locked)
       toggle_privacy();
     return 0;
   }
@@ -634,6 +696,8 @@ fun validate_input_callback(entry_text, add_text) {
     }
     # Never let a stray escape sequence into the passphrase.
     if (is_seq)
+      return 0;
+    if (locked && add_text != "\e")
       return 0;
     return 1;
   }
@@ -661,8 +725,11 @@ fun validate_input_callback(entry_text, add_text) {
   # Lone Esc still toggles plymouth's details view.
   if (add_text == "\e")
     return 1;
-  # Anything printable: back to the entry, keeping the character.
+  # Anything printable: back to the entry, keeping the character (unless
+  # locked out).
   set_focus(-1);
+  if (locked)
+    return 0;
   return 1;
 }
 
@@ -671,6 +738,7 @@ fun display_password_callback(prompt_text, bullet_count) {
   if (state.grace > 0) {
     state.grace = 0;
     state.shake = 30;
+    lockout_fail();
   }
   state.mode = "hold";
   state.opacity = 1;
@@ -707,6 +775,7 @@ fun display_normal_callback() {
   privacy.clearing = 0;
   ui.focus = -1;
   ui.busy = 0;
+  lockout.shown = -1;             # its sprite goes with the dialog
   dialog = NULL;
   state.dialog_up = 0;
   log.visible = 1;

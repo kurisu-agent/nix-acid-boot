@@ -22,6 +22,8 @@
   decodeGlyphs ? null,
   privacyDefault ? "verify",
   privacyToggle ? true,
+  lockoutSchedule ? [ ],
+  lockoutText ? "Retry in",
 }:
 
 let
@@ -339,6 +341,13 @@ rec {
 
       privacyVerify = if privacyDefault == "verify" then "1" else "0";
       privacyToggle = if privacyToggle then "1" else "0";
+
+      # Lockout waits in seconds per failed attempt, the last repeating.
+      lockoutSetup = lib.concatStringsSep "\n" (
+        [ "lockout.count = ${toString (lib.length lockoutSchedule)};" ]
+        ++ lib.imap0 (i: s: "lockout.secs[${toString i}] = ${toString s};") lockoutSchedule
+      );
+      inherit lockoutText;
 
       decodeEnabled = if entryStyle == "decode" then "1" else "0";
       # Weights become a pick table of glyph indices: rand_glyph() then
