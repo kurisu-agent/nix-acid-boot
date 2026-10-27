@@ -24,7 +24,8 @@ and `cool-gray`. Bring your own SVG and it's colored the same way.</sub>
   sequence, so the unit a stop job is stuck on is visible instead of
   hidden behind a frozen splash.
 - **LUKS passphrase dialog** with configurable label (default
-  `Enter Password`), asterisk bullets, and a blinking cursor.
+  `Enter Password`), Matrix-style decode entry, power/boot-menu/UEFI
+  buttons, and a blinking cursor.
 - **Two bundled artworks** — the Nix snowflake and a flower of life —
   selected with `acidBoot.logo`, or bring your own SVG with
   `acidBoot.logoSvg` and it is recolored to the palette and re-rendered
@@ -113,9 +114,11 @@ the override becomes a harmless no-op.
 
 ## Passphrase screen extras
 
-All opt-in; with the defaults the screen is unchanged.
+Buttons and the decode entry are on by default; `buttons = [ ]` and
+`entryStyle = "bullets"` give back the plain screen.
 
-- **Buttons** (`acidBoot.buttons`): a row of icons under the entry.
+- **Buttons** (`acidBoot.buttons`, all three by default when the initrd
+  runs systemd): a row of icons under the entry.
   `↓` moves to them, `←`/`→` walk them, `↑` returns, `Enter`
   activates, and typing any character jumps back to the entry with it
   kept. `poweroff` powers off, `bootmenu` reboots into the
@@ -123,7 +126,7 @@ All opt-in; with the defaults the screen is unchanged.
   `firmware` reboots into UEFI setup. The theme only drops a request
   file; the module ships the initrd (and stage 2) units that act on it.
   The cursor blinks only while the entry has focus.
-- **Decode entry** (`acidBoot.entryStyle = "decode"`): each character
+- **Decode entry** (`acidBoot.entryStyle`, `"decode"` by default): each character
   rains through Matrix-style glyphs — mostly half-width kana, plus
   digits, symbols and a ciphertext-looking latin alphabet — then locks
   onto one with a white flash; backspace glitches it out. Glyphs are
@@ -145,8 +148,7 @@ All opt-in; with the defaults the screen is unchanged.
 
 ```nix
 acidBoot = {
-  buttons = [ "poweroff" "bootmenu" "firmware" ];
-  entryStyle = "decode";
+  buttons = [ "poweroff" "firmware" ];  # order/subset; [ ] for none
   buttonLabels = {
     poweroff = "電源オフ";
     bootmenu = "ブートメニュー";
@@ -204,9 +206,9 @@ acidBoot = {
 | `acidBoot.logFontName` | `"JetBrains Mono"` | fontconfig family for the log tail |
 | `acidBoot.fontFiles` | JetBrains Mono ttf | files shipped into the initrd; must cover the families above |
 | `acidBoot.retainSplash` | `true` | `plymouth quit --retain-splash` handoff |
-| `acidBoot.buttons` | `[ ]` | any of `poweroff`, `bootmenu`, `firmware`, in display order; needs systemd in the initrd |
+| `acidBoot.buttons` | all three with systemd initrd, else `[ ]` | any of `poweroff`, `bootmenu`, `firmware`, in display order; needs systemd in the initrd |
 | `acidBoot.buttonLabels` | `{ }` | label per button, merged over English defaults |
-| `acidBoot.entryStyle` | `"bullets"` | `"decode"` for the Matrix-style entry |
+| `acidBoot.entryStyle` | `"decode"` | Matrix-style entry; `"bullets"` for plain asterisks |
 | `acidBoot.decodeGlyphs` | `null` | custom glyph list for `decode` (uniform picks); `null` is the weighted kana/cipher mix |
 | `acidBoot.privacyDefault` | `"verify"` | starting mode each boot: `"verify"` (one glyph per character) or `"private"` (length hidden) |
 | `acidBoot.privacyToggle` | `true` | `Tab` flips the mode for that boot; the non-default mode shows its eye |

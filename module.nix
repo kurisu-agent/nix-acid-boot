@@ -301,14 +301,18 @@ in
           "firmware"
         ]
       );
-      default = [ ];
-      example = [
+      default = lib.optionals config.boot.initrd.systemd.enable [
         "poweroff"
         "bootmenu"
         "firmware"
       ];
+      defaultText = lib.literalExpression ''
+        lib.optionals config.boot.initrd.systemd.enable [ "poweroff" "bootmenu" "firmware" ]
+      '';
+      example = [ ];
       description = ''
-        Action buttons under the passphrase entry, in this order. Down
+        Action buttons under the passphrase entry, in this order; `[ ]`
+        turns them off. On by default wherever the initrd runs systemd. Down
         moves focus to them, Left/Right walk them, Up returns to the
         entry, Enter activates; typing any character goes back to the
         entry. `poweroff` powers off; `bootmenu` reboots into the
@@ -401,7 +405,8 @@ in
         "bullets"
         "decode"
       ];
-      default = "bullets";
+      default = "decode";
+      example = "bullets";
       description = ''
         How typed characters appear. `bullets` is a row of asterisks;
         `decode` rains each new character through random glyphs before
