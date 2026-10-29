@@ -2,12 +2,20 @@
 {
   config,
   lib,
+  options,
   pkgs,
   ...
 }:
 
 let
   cfg = config.acidBoot;
+
+  # nixpkgs #573038 (2026-10) dropped the scripted initrd: systemd is the
+  # only stage 1 and `boot.initrd.systemd.enable` is a removed option that
+  # throws when read. Older pins (clan-alpha) still have the real option.
+  systemdInitrd =
+    (options.boot.initrd.systemd.enable.visible or true) == false
+    || config.boot.initrd.systemd.enable;
 
   acid = import ./theme.nix {
     inherit pkgs;
@@ -301,13 +309,13 @@ in
           "firmware"
         ]
       );
-      default = lib.optionals config.boot.initrd.systemd.enable [
+      default = lib.optionals systemdInitrd [
         "poweroff"
         "bootmenu"
         "firmware"
       ];
       defaultText = lib.literalExpression ''
-        lib.optionals config.boot.initrd.systemd.enable [ "poweroff" "bootmenu" "firmware" ]
+        lib.optionals systemdInitrd [ "poweroff" "bootmenu" "firmware" ]
       '';
       example = [ ];
       description = ''
@@ -499,12 +507,12 @@ in
     #
     # Fix: ship the agent from the initrd's own systemd, point the unit
     # at it, and stop the conditions from skipping/limiting the watcher.
-    boot.initrd.systemd.storePaths = lib.mkIf config.boot.initrd.systemd.enable [
+    boot.initrd.systemd.storePaths = lib.mkIf systemdInitrd [
       "${config.boot.initrd.systemd.package}/bin/systemd-tty-ask-password-agent"
     ];
 
     boot.initrd.systemd.paths."systemd-ask-password-plymouth" =
-      lib.mkIf config.boot.initrd.systemd.enable
+      lib.mkIf systemdInitrd
         {
           overrideStrategy = "asDropin";
           wantedBy = [ "sysinit.target" ];
@@ -515,7 +523,7 @@ in
         };
 
     boot.initrd.systemd.services."systemd-ask-password-plymouth" =
-      lib.mkIf config.boot.initrd.systemd.enable
+      lib.mkIf systemdInitrd
         {
           overrideStrategy = "asDropin";
           unitConfig.ConditionPathExists = "";
@@ -540,7 +548,7 @@ in
   (lib.mkIf (actionButtons != [ ]) {
     assertions = [
       {
-        assertion = config.boot.initrd.systemd.enable;
+        assertion = systemdInitrd;
         message = "acidBoot.buttons needs boot.initrd.systemd.enable.";
       }
     ];
